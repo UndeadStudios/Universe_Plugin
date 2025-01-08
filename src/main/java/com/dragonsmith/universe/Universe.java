@@ -4,12 +4,14 @@ import net.milkbowl.vault.economy.Economy;
 import org.bukkit.*;
 import org.bukkit.block.Biome;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.block.BlockFormEvent;
+import org.bukkit.event.block.BlockFromToEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.RegisteredServiceProvider;
@@ -51,7 +53,7 @@ public class Universe extends JavaPlugin {
         islandSpacing = config.getInt("island.spacing", 600);
         defaultIslandSize = config.getInt("island.default_size", 32);
         maxIslandSize = config.getInt("island.max_size", 512);
-        spawnHeight = 56; // Spawn just above the grass block, which is at Y = 56
+        spawnHeight = 57; // Spawn just above the grass block, which is at Y = 56
 
         // Initialize the BlockTracker listener
         blockTracker = new BlockTracker();
@@ -125,11 +127,15 @@ public class Universe extends JavaPlugin {
             islandGeneratorLevels.put(playerId, 1); // Default generator level is 1
 
             generateIsland(center, defaultIslandSize, playerId);
-
+            world.getChunkAt(center).load();  // Ensure the chunk at the center is loaded
             // Teleport player just above the grass block (Y = 57)
             player.teleport(center.clone().add(0, 57, 0));
             islandBiomes.put(playerId, Biome.PLAINS);
             giveStarterChest(center);
+            generateTerrain(center, 32);
+
+            // Place trees during island generation
+            generateTrees(center, 32);
             player.sendMessage(ChatColor.GREEN + "Island created at your location!");
             return true;
         }
@@ -226,26 +232,26 @@ public class Universe extends JavaPlugin {
         return false;
     }
     private void setBiome(Location center, int size, Biome biome) {
-        int half = size / 2;  // Calculate the half of the island size
+        int half = size / 2;
         World world = center.getWorld();
 
-        // Ensure the world isn't null before proceeding
         if (world == null) {
             return;
         }
 
-        // Loop through the area around the center and set the biome
+        // Loop through the area and set the biome at each point
         for (int x = -half; x <= half; x++) {
             for (int z = -half; z <= half; z++) {
-                // Adjust the X and Z coordinates for the biome setting
+                // Set the biome for the specific location (X, Z)
                 int blockX = center.getBlockX() + x;
                 int blockZ = center.getBlockZ() + z;
 
-                // Set the biome for the corresponding chunk
+                // Make sure the coordinates are within the valid chunk range
                 world.setBiome(blockX, blockZ, biome);
             }
         }
     }
+
 
 
     private void generateIsland(Location center, int size, UUID playerId) {
@@ -301,13 +307,8 @@ public class Universe extends JavaPlugin {
                 }
 
 
-                // Place trees during island generation
-                generateTrees(center, size);
-
-
                 // Save island center and size to the config after generating
                 saveIslandData(playerId, center, size);
-
                 // Set the world border
                 World world = Bukkit.getWorld("universe_world");
                 if (world != null) {
@@ -319,73 +320,112 @@ public class Universe extends JavaPlugin {
             }
         }.runTask(this); // Run this task on the main thread
     }
-
-
-    private void generateOres(Location center, int size, UUID playerId) {
-        int generatorLevel = islandGeneratorLevels.get(playerId); // Get the current generator level
-        Material oreType = Material.COBBLESTONE; // Default ore is cobblestone
-
-        // Set ore type based on generator level
-        switch (generatorLevel) {
-            case 1:
-                oreType = Material.COAL_ORE;
-                break;
-            case 2:
-                oreType = Material.IRON_ORE;
-                break;
-            case 3:
-                oreType = Material.GOLD_ORE;
-                break;
-            case 4:
-                oreType = Material.DIAMOND_ORE;
-                break;
-            case 5:
-                oreType = Material.EMERALD_ORE;
-                break;
-        }
-
+    public void generateTerrain(Location center, int size) {
+        // Calculate the half size of the island (radius from center)
         int half = size / 2;
-
-        // Randomly place ores within the island bounds
-        for (int i = 0; i < size * 2; i++) {
-            int x = center.getBlockX() + (int) (Math.random() * size - half);
-            int z = center.getBlockZ() + (int) (Math.random() * size - half);
-            Location loc = new Location(center.getWorld(), x, 55, z); // Place ores around Y = 55
-
-            if (loc.getBlock().getType() == Material.STONE) {
-                loc.getBlock().setType(oreType);
-            }
-        }
-    }
-
-    public void generateTrees(Location center, int size) {
         World world = center.getWorld();
-        // Loop through the area around the center point
-        for (int x = -size / 2; x < size / 2; x++) {
-            for (int z = -size / 2; z < size / 2; z++) {
-                // Calculate the location for the potential tree position
-                Location treeLocation = center.clone().add(x, 0, z);
 
-                // Find the ground level (solid block below height 57)
-                int groundY = world.getHighestBlockYAt(treeLocation.getBlockX(), treeLocation.getBlockZ());
+        // Ensure the world is not null
+        if (world == null) {
+            return;
+        }
 
-                // Ensure the location is at Y=57 and there is solid ground below it
-                if (groundY == 57) {
-                    Block block = world.getBlockAt(treeLocation);
-                    if (block.getType() == Material.AIR) {
-                        // Check if the block below is solid (this ensures a tree doesn't spawn mid-air)
-                        Block blockBelow = world.getBlockAt(treeLocation.clone().add(0, -1, 0));
-                        if (blockBelow.getType() == Material.GRASS_BLOCK || blockBelow.getType() == Material.DIRT || blockBelow.getType() == Material.SAND) {
-                            // Random chance to place a tree
-                            if (Math.random() < 0.1) {
-                                // Generate the tree
-                                world.generateTree(treeLocation, TreeType.TREE); // You can change TreeType if needed
+        // Random object to decide where to place flowers and grass
+        Random random = new Random();
+
+        // Loop through the area around the center and generate terrain
+        for (int x = -half; x <= half; x++) {
+            for (int z = -half; z <= half; z++) {
+                // Calculate the X and Z coordinates based on the center
+                int blockX = center.getBlockX() + x;
+                int blockZ = center.getBlockZ() + z;
+
+                // Apply a fixed Y-offset to the Y coordinate (height of the island)
+                int blockY = center.getBlockY() + 56;
+
+                // Get the block at the calculated X, Y, Z location (for the ground)
+                Block block = world.getBlockAt(blockX, blockY + 1, blockZ);
+
+                // Skip the block if it is a chest or non-ground block
+                if (block.getType() == Material.CHEST || block.getType() == Material.AIR) {
+                    continue;  // Skip this block and move to the next one
+                }
+
+                // Only modify blocks that are grass blocks or suitable ground
+                if (block.getType() == Material.GRASS_BLOCK || block.getType() == Material.DIRT) {
+                    // Check the block above (one block higher than the ground)
+                    Block blockAbove = world.getBlockAt(blockX, blockY + 1, blockZ);
+
+                    // Make sure the block above is empty (not solid or already occupied)
+                    if (blockAbove.getType() == Material.AIR) {
+                        // Randomly decide whether to place grass or a flower
+                        if (random.nextInt(10) < 8) {  // 80% chance to add grass
+                            blockAbove.setType(Material.TALL_GRASS);
+                        } else {
+                            // Randomly choose between a flower (poppy or dandelion)
+                            if (random.nextBoolean()) {
+                                blockAbove.setType(Material.POPPY);  // 50% chance for poppy
+                            } else {
+                                blockAbove.setType(Material.DANDELION);  // 50% chance for dandelion
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+
+
+
+
+    public void generateTrees(Location center, int size) {
+        World world = center.getWorld();
+        Random random = new Random();
+
+        // Generate a random number of trees between 5 and 25
+        int maxTrees = 2 + random.nextInt(20);
+
+        int treeCount = 0; // Counter for the number of trees generated
+
+        // Loop through the area around the center point
+        for (int i = 1; i < maxTrees; i++) {
+            // Get random x and z within the island's size
+            int xOffset = random.nextInt(size) - size / 2;
+            int zOffset = random.nextInt(size) - size / 2;
+
+            // Calculate the location for the potential tree position
+            Location treeLocation = center.clone().add(xOffset, 57, zOffset);
+            // Get the block at the calculated X, Y, Z location
+            Block block = world.getBlockAt(treeLocation);
+            // Skip the block if it is a chest
+            if (block.getType() == Material.CHEST) {
+                continue;  // Skip this block and move to the next one
+            }
+
+            // Find the ground level (solid block below height 57)
+            int groundY = world.getHighestBlockYAt(treeLocation.getBlockX(), treeLocation.getBlockZ());
+
+            // Ensure the location is at Y=57 and there is solid ground below it
+            if (groundY == 57) {
+                block = world.getBlockAt(treeLocation);
+                if (block.getType() == Material.AIR) {
+                    // Check if the block below is solid (this ensures a tree doesn't spawn mid-air)
+                    Block blockBelow = world.getBlockAt(treeLocation.clone().add(0, -1, 0));
+                    if (blockBelow.getType() == Material.GRASS_BLOCK || blockBelow.getType() == Material.DIRT || blockBelow.getType() == Material.SAND) {
+                        // Random chance to place a tree (e.g., 70% chance)
+                        if (Math.random() < 1.0) {
+                            // Generate the tree
+                            world.generateTree(treeLocation, TreeType.TREE); // You can change TreeType if needed
+                            treeCount++; // Increment the tree counter
+                        }
+                    }
+                }
+            }
+        }
+
+        // Print a message with the number of trees generated
+        System.out.println("Generated " + treeCount + " trees.");
     }
 
     private void giveStarterChest(Location center) {
@@ -396,7 +436,7 @@ public class Universe extends JavaPlugin {
         Chest chest = (Chest) chestLocation.getBlock().getState();
         Inventory chestInventory = chest.getInventory();
 
-        chestInventory.addItem(new ItemStack(Material.OAK_SAPLING, 3));
+        chestInventory.addItem(new ItemStack(Material.OAK_SAPLING, 6));
         chestInventory.addItem(new ItemStack(Material.CRAFTING_TABLE));
         chestInventory.addItem(new ItemStack(Material.ICE, 2));
         chestInventory.addItem(new ItemStack(Material.LAVA_BUCKET, 1));
@@ -404,6 +444,7 @@ public class Universe extends JavaPlugin {
         chestInventory.addItem(new ItemStack(Material.LEATHER_CHESTPLATE));
         chestInventory.addItem(new ItemStack(Material.LEATHER_LEGGINGS));
         chestInventory.addItem(new ItemStack(Material.LEATHER_BOOTS));
+        chestInventory.addItem(new ItemStack(Material.BONE, 16));
     }
 
     private void saveIslandData(UUID playerId, Location center, int size) {
@@ -426,42 +467,50 @@ public class Universe extends JavaPlugin {
         }
     }
     @EventHandler
-    public void onCobblestoneGen(BlockFormEvent event) {
+    public void onBlockFromTo(BlockFromToEvent event) {
         Block block = event.getBlock();
-        // Check if the cobblestone is being formed
-        if (block.getType() == Material.COBBLESTONE) {
-            // Random chance to place ores within the cobblestone
-            if (Math.random() < 0.2) { // 20% chance, adjust as necessary
-                Location cobbleLocation = block.getLocation();
-                placeOreInCobblestone(cobbleLocation);
+
+        // Check if the block is water or lava flowing into a location
+        if (block.getType() == Material.WATER || block.getType() == Material.LAVA) {
+            // Get the block it’s flowing into
+            Block toBlock = event.getToBlock();
+
+            // Check if the destination block is cobblestone (generated by water/lava interaction)
+            if (toBlock.getType() == Material.COBBLESTONE) {
+                // Call the placeOreInCobblestone method to replace the cobblestone with ore
+                placeOreInCobblestone(toBlock.getLocation());
             }
         }
     }
 
     private void placeOreInCobblestone(Location location) {
         Random rand = new Random();
+
         // Choose a random ore to generate
-        Material ore = getRandomOre();
+        Material ore = getRandomOre(rand);
 
-        // Get a random offset from the cobblestone's location (nearby area)
-        int offsetX = rand.nextInt(3) - 1;  // Random -1, 0, or 1
-        int offsetY = rand.nextInt(3) - 1;  // Random -1, 0, or 1
-        int offsetZ = rand.nextInt(3) - 1;  // Random -1, 0, or 1
-
-        Location oreLocation = location.clone().add(offsetX, offsetY, offsetZ);
-
-        // Only place ore if it's not a solid block (ensures it doesn't overwrite other blocks)
-        if (oreLocation.getBlock().getType() == Material.AIR) {
-            oreLocation.getBlock().setType(ore);
+        // Only replace the cobblestone with an ore if it's indeed cobblestone
+        if (location.getBlock().getType() == Material.COBBLESTONE) {
+            location.getBlock().setType(ore);  // Replace cobblestone with ore
         }
     }
 
-    private Material getRandomOre() {
-        // Return a random ore (can be expanded with more ores)
-        Material[] ores = {
-                Material.COAL_ORE, Material.IRON_ORE, Material.GOLD_ORE, Material.DIAMOND_ORE, Material.EMERALD_ORE
-        };
-        return ores[new Random().nextInt(ores.length)];
+    // Helper method to return a random ore type
+    private Material getRandomOre(Random rand) {
+        switch (rand.nextInt(5)) {
+            case 0:
+                return Material.COAL_ORE;
+            case 1:
+                return Material.IRON_ORE;
+            case 2:
+                return Material.GOLD_ORE;
+            case 3:
+                return Material.DIAMOND_ORE;
+            case 4:
+                return Material.REDSTONE_ORE;  // You can add more ores here as needed
+            default:
+                return Material.COBBLESTONE;  // Shouldn't really happen, but a fallback
+        }
     }
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
