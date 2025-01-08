@@ -2,6 +2,7 @@ package com.dragonsmith.universe;
 
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.*;
+import org.bukkit.block.Biome;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -23,6 +24,8 @@ public class Universe extends JavaPlugin {
     private final HashMap<UUID, Location> islandCenters = new HashMap<>();
     private final HashMap<UUID, Integer> islandSizes = new HashMap<>();
     private final HashMap<UUID, Integer> islandGeneratorLevels = new HashMap<>(); // Track the level of ore generator
+    // Initialize the islandBiomes map if not already initialized
+    private Map<UUID, Biome> islandBiomes = new HashMap<>();
     private BlockTracker blockTracker;
     private Economy economy;
 
@@ -70,6 +73,7 @@ public class Universe extends JavaPlugin {
         getCommand("createisland").setTabCompleter(this);
         getCommand("expandisland").setTabCompleter(this);
         getCommand("balance").setTabCompleter(this);
+        this.getCommand("setbiome").setTabCompleter(new SetBiomeTabCompleter());
 
     }
 
@@ -124,6 +128,7 @@ public class Universe extends JavaPlugin {
 
             // Teleport player just above the grass block (Y = 57)
             player.teleport(center.clone().add(0, 57, 0));
+            islandBiomes.put(playerId, Biome.PLAINS);
             giveStarterChest(center);
             player.sendMessage(ChatColor.GREEN + "Island created at your location!");
             return true;
@@ -190,8 +195,58 @@ public class Universe extends JavaPlugin {
             player.sendMessage(ChatColor.GREEN + "Your balance: " + balance + " coins.");
             return true;
         }
+        if (command.getName().equalsIgnoreCase("setbiome")) {
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't have an island yet!");
+                return true;
+            }
+
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /setbiome <biome>");
+                return true;
+            }
+
+            String biomeName = args[0].toUpperCase();
+            try {
+                Biome biome = Biome.valueOf(biomeName);
+                islandBiomes.put(playerId, biome);
+
+                Location center = islandCenters.get(playerId);
+                int size = islandSizes.get(playerId);
+                setBiome(center, size, biome);
+
+                player.sendMessage(ChatColor.GREEN + "Biome changed to " + biome.name() + "!");
+            } catch (IllegalArgumentException e) {
+                player.sendMessage(ChatColor.RED + "Invalid biome name!");
+            }
+            return true;
+        }
+
+
         return false;
     }
+    private void setBiome(Location center, int size, Biome biome) {
+        int half = size / 2;  // Calculate the half of the island size
+        World world = center.getWorld();
+
+        // Ensure the world isn't null before proceeding
+        if (world == null) {
+            return;
+        }
+
+        // Loop through the area around the center and set the biome
+        for (int x = -half; x <= half; x++) {
+            for (int z = -half; z <= half; z++) {
+                // Adjust the X and Z coordinates for the biome setting
+                int blockX = center.getBlockX() + x;
+                int blockZ = center.getBlockZ() + z;
+
+                // Set the biome for the corresponding chunk
+                world.setBiome(blockX, blockZ, biome);
+            }
+        }
+    }
+
 
     private void generateIsland(Location center, int size, UUID playerId) {
         int half = size / 2;

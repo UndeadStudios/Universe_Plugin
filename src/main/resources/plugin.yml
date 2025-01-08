@@ -33,7 +33,11 @@ commands:
     usage: /upgradegenerator
     permission: universe.upgradegenerator
     permission-message: You don't have permission to upgrade your generator!
-
+  setbiome:
+    description: Set the biome for your island.
+    usage: /setbiome <biome>
+    permission: universe.setbiome
+    permission-message: You don't have permission to set the biome!
 permissions:
   universe.createisland:
     description: Allows players to create their own island.
@@ -53,4 +57,8 @@ permissions:
 
   universe.upgradegenerator:
     description: Allows players to upgrade the ore generator on their island.
+    default: true
+
+  universe.setbiome:
+    description: Allows players to change the biome of the island.
     default: true
