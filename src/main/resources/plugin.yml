@@ -33,11 +33,19 @@ commands:
     usage: /upgradegenerator
     permission: universe.upgradegenerator
     permission-message: You don't have permission to upgrade your generator!
+
   setbiome:
     description: Set the biome for your island.
     usage: /setbiome <biome>
     permission: universe.setbiome
     permission-message: You don't have permission to set the biome!
+
+  trust:
+    description: Grants another player access to your island.
+    usage: /trust <player>
+    permission: universe.trust
+    permission-message: You don't have permission to trust other players on your island!
+
 permissions:
   universe.createisland:
     description: Allows players to create their own island.
@@ -61,4 +69,8 @@ permissions:
 
   universe.setbiome:
     description: Allows players to change the biome of the island.
+    default: true
+
+  universe.trust:
+    description: Allows players to grant access to their island to others.
     default: true
