@@ -1,0 +1,30 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.dragonsmith.universe'
+version = '1.0'
+
+repositories {
+    mavenCentral()
+    maven {
+        name "essentialsx-snapshots"
+        url "https://repo.essentialsx.net/snapshots/"
+    }
+    maven {
+        name = 'papermc'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    compileOnly('net.essentialsx:EssentialsX:2.21.0-SNAPSHOT') {
+        exclude group: 'org.spigotmc', module: 'spigot-api'
+    }
+    compileOnly fileTree(dir: 'libs', include: '*.jar')  // This will include all JARs in the 'libs' folder
+}
+
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+}

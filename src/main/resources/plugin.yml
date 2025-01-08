@@ -1,0 +1,56 @@
+name: universe
+version: 1.1
+main: com.dragonsmith.universe.Universe
+api-version: '1.21'
+
+commands:
+  createisland:
+    description: Creates a new island at a random location for the player.
+    usage: /createisland
+    permission: universe.createisland
+    permission-message: You don't have permission to create an island!
+
+  expandisland:
+    description: Expands the size of your island.
+    usage: /expandisland
+    permission: universe.expandisland
+    permission-message: You don't have permission to expand your island!
+
+  home:
+    description: Teleports you to your island home.
+    usage: /home
+    permission: universe.home
+    permission-message: You don't have permission to teleport to your island home!
+
+  deleteisland:
+    description: Deletes your island and removes it from the world.
+    usage: /deleteisland
+    permission: universe.deleteisland
+    permission-message: You don't have permission to delete your island!
+
+  upgradegenerator:
+    description: Upgrades the ore generator on your island.
+    usage: /upgradegenerator
+    permission: universe.upgradegenerator
+    permission-message: You don't have permission to upgrade your generator!
+
+permissions:
+  universe.createisland:
+    description: Allows players to create their own island.
+    default: true
+
+  universe.expandisland:
+    description: Allows players to expand the size of their island.
+    default: true
+
+  universe.home:
+    description: Allows players to teleport to their island home.
+    default: true
+
+  universe.deleteisland:
+    description: Allows players to delete their own island.
+    default: true
+
+  universe.upgradegenerator:
+    description: Allows players to upgrade the ore generator on their island.
+    default: true
