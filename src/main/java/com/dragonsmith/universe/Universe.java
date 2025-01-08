@@ -10,6 +10,9 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockFormEvent;
 import org.bukkit.event.block.BlockFromToEvent;
 import org.bukkit.inventory.Inventory;
@@ -21,7 +24,7 @@ import org.bukkit.block.Chest;
 
 import java.util.*;
 
-public class Universe extends JavaPlugin {
+public class Universe extends JavaPlugin implements Listener {
 
     private final HashMap<UUID, Location> islandCenters = new HashMap<>();
     private final HashMap<UUID, Integer> islandSizes = new HashMap<>();
@@ -227,7 +230,36 @@ public class Universe extends JavaPlugin {
             }
             return true;
         }
+        // Command to trust another player
+        if (command.getName().equalsIgnoreCase("trust")) {
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /trust <player>");
+                return true;
+            }
 
+            Player targetPlayer = Bukkit.getPlayer(args[0]);
+            if (targetPlayer == null) {
+                player.sendMessage(ChatColor.RED + "Player not found.");
+                return true;
+            }
+
+            UUID targetPlayerId = targetPlayer.getUniqueId();
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't have an island to trust players on!");
+                return true;
+            }
+
+            // Ensure the island is owned by the current player
+            if (!islandCenters.get(playerId).equals(islandCenters.get(targetPlayerId))) {
+                player.sendMessage(ChatColor.RED + "This player does not have an island.");
+                return true;
+            }
+
+            // Add the player to the trusted list
+            trustedPlayers.computeIfAbsent(playerId, k -> new HashSet<>()).add(targetPlayerId);
+            player.sendMessage(ChatColor.GREEN + "You have trusted " + targetPlayer.getName() + " to build on your island!");
+            return true;
+        }
 
         return false;
     }
@@ -482,7 +514,56 @@ public class Universe extends JavaPlugin {
             }
         }
     }
+    // Block placement event to check if the player is allowed to build
+    @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
 
+        // Check if the player is trying to build on someone else's island
+        if (islandCenters.containsKey(playerId)) {
+            Location blockLocation = event.getBlock().getLocation();
+            UUID ownerId = getIslandOwner(blockLocation);
+
+            if (ownerId != null && !ownerId.equals(playerId) && !trustedPlayers.getOrDefault(ownerId, new HashSet<>()).contains(playerId)) {
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "You cannot build here. You are not trusted on this island.");
+            }
+        }
+    }
+
+    // Block interaction event (for chest opening, etc.)
+    @EventHandler
+    public void onPlayerInteract(PlayerInteractEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+
+        if (event.getClickedBlock() != null && islandCenters.containsKey(playerId)) {
+            Location blockLocation = event.getClickedBlock().getLocation();
+            UUID ownerId = getIslandOwner(blockLocation);
+
+            if (ownerId != null && !ownerId.equals(playerId) && !trustedPlayers.getOrDefault(ownerId, new HashSet<>()).contains(playerId)) {
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "You cannot interact with this block. You are not trusted on this island.");
+            }
+        }
+    }
+
+    // Get the owner of an island based on a block location
+    private UUID getIslandOwner(Location location) {
+        for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
+            UUID ownerId = entry.getKey();
+            Location islandCenter = entry.getValue();
+            int islandSize = islandSizes.get(ownerId);
+            int halfSize = islandSize / 2;
+
+            if (Math.abs(location.getBlockX() - islandCenter.getBlockX()) <= halfSize &&
+                Math.abs(location.getBlockZ() - islandCenter.getBlockZ()) <= halfSize) {
+                return ownerId;
+            }
+        }
+        return null; // Return null if no owner is found
+    }
     private void placeOreInCobblestone(Location location) {
         Random rand = new Random();
 
