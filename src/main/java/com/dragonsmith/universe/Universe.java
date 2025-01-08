@@ -31,6 +31,8 @@ public class Universe extends JavaPlugin implements Listener {
     private final HashMap<UUID, Integer> islandGeneratorLevels = new HashMap<>(); // Track the level of ore generator
     // Initialize the islandBiomes map if not already initialized
     private Map<UUID, Biome> islandBiomes = new HashMap<>();
+       // Add a map to track which players are trusted on an island
+    private final HashMap<UUID, Set<UUID>> trustedPlayers = new HashMap<>();
     private BlockTracker blockTracker;
     private Economy economy;
 
