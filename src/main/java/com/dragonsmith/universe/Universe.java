@@ -311,63 +311,89 @@ if (command.getName().equalsIgnoreCase("createisland")) {
 
 
 
-    private void generateIsland(Location center, int size, UUID playerId) {
-        int half = size / 2;
-   Random random = new Random();
-        // Perform the island generation on the main thread to ensure block updates
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                // Generate terrain
-                for (int x = -half; x <= half; x++) {
-                    for (int z = -half; z <= half; z++) {
-                        for (int y = -64; y <= 64; y++) { // Loop through Y from -64 to 64
-                            Location loc = center.clone().add(x, y, z);
+private void generateIsland(Location center, int size, UUID playerId) {
+    int half = size / 2;
+    Random random = new Random();
 
-                            // Skip blocks that have been broken by the player
-                            if (blockTracker.isBlockBroken(playerId, loc)) {
-                                continue; // Don't modify this block
+    // Perform the island generation on the main thread to ensure block updates
+    new BukkitRunnable() {
+        @Override
+        public void run() {
+            // Generate terrain
+            for (int x = -half; x <= half; x++) {
+                for (int z = -half; z <= half; z++) {
+                    for (int y = -64; y <= 64; y++) { // Loop through Y from -64 to 64
+                        Location loc = center.clone().add(x, y, z);
+
+                        // Skip blocks that have been broken by the player
+                        if (blockTracker.isBlockBroken(playerId, loc)) {
+                            continue; // Don't modify this block
+                        }
+
+                        // Only modify air blocks (or bedrock for the bottom-most layer)
+                        if (loc.getBlock().getType() == Material.AIR || loc.getBlock().getType() == Material.BEDROCK) {
+                            if (y == -64) {
+                                loc.getBlock().setType(Material.BEDROCK);
                             }
-
-                            // Only modify air blocks (or bedrock for the bottom-most layer)
-                            if (loc.getBlock().getType() == Material.AIR || loc.getBlock().getType() == Material.BEDROCK) {
-                                if (y == -64) {
-                                    loc.getBlock().setType(Material.BEDROCK);
-                                }
-                                // Generate Deepslate from Y = -63 to Y = -6
-                                else if (y >= -63 && y <= -6) {
-                                    loc.getBlock().setType(Material.DEEPSLATE);
-                                }
-                                // Generate mixed Stone and Deepslate from Y = -5 to Y = 5
-                                else if (y >= -5 && y <= 5) {
-                                    Material material = Math.random() < 0.5 ? Material.DEEPSLATE : Material.STONE;
-                                    loc.getBlock().setType(material);
-                                }
-                                // Generate Stone/Dirt from Y = 0 to Y = 55
-                                else if (y >= 0 && y <= 52) {
-                                    loc.getBlock().setType(Material.STONE);
-                                }
-                                else if (y >= 53 && y <= 55) {
-                                    loc.getBlock().setType(Material.DIRT);
-                                }
-                                // Generate Grass at Y = 56
-                                else if (y == 56) {
-                                    loc.getBlock().setType(Material.GRASS_BLOCK);
-                                }
-
+                            // Generate Deepslate from Y = -63 to Y = -6
+                            else if (y >= -63 && y <= -6) {
+                                loc.getBlock().setType(Material.DEEPSLATE);
+                                generateOres(loc, random, y, Material.DEEPSLATE);
+                            }
+                            // Generate mixed Stone and Deepslate from Y = -5 to Y = 5
+                            else if (y >= -5 && y <= 5) {
+                                Material material = Math.random() < 0.5 ? Material.DEEPSLATE : Material.STONE;
+                                loc.getBlock().setType(material);
+                                generateOres(loc, random, y, material);
+                            }
+                            // Generate Stone/Dirt from Y = 0 to Y = 55
+                            else if (y >= 0 && y <= 52) {
+                                loc.getBlock().setType(Material.STONE);
+                                generateOres(loc, random, y, Material.STONE);
+                            } else if (y >= 53 && y <= 55) {
+                                loc.getBlock().setType(Material.DIRT);
+                            }
+                            // Generate Grass at Y = 56
+                            else if (y == 56) {
+                                loc.getBlock().setType(Material.GRASS_BLOCK);
                             }
                         }
                     }
                 }
-                // Place trees during island generation
-                    // Now generate trees on the island
-                    generateTrees(center, size, random);
-
-                // Save island center and size to the config after generating
-                saveIslandData(playerId, center, size);
             }
-        }.runTask(this); // Run this task on the main thread
+
+            // Now generate trees on the island
+            generateTrees(center, size, random);
+
+            // Save island center and size to the config after generating
+            saveIslandData(playerId, center, size);
+        }
+    }.runTask(this); // Run this task on the main thread
+}
+private void generateOres(Location loc, Random random, int y, Material baseMaterial) {
+    Material ore = null;
+
+    if (y >= -64 && y <= -8) { // Deep underground
+        if (random.nextDouble() < 0.01) ore = Material.DIAMOND_ORE;
+        else if (random.nextDouble() < 0.05) ore = Material.REDSTONE_ORE;
+        else if (random.nextDouble() < 0.1) ore = Material.GOLD_ORE;
+        else if (random.nextDouble() < 0.15) ore = Material.IRON_ORE;
+        else if (random.nextDouble() < 0.2) ore = Material.LAPIS_ORE;
+    } else if (y >= -7 && y <= 15) { // Mid-level
+        if (random.nextDouble() < 0.01) ore = Material.DIAMOND_ORE;
+        else if (random.nextDouble() < 0.03) ore = Material.EMERALD_ORE;
+        else if (random.nextDouble() < 0.15) ore = Material.IRON_ORE;
+        else if (random.nextDouble() < 0.3) ore = Material.COAL_ORE;
+    } else if (y >= 16 && y <= 52) { // Near the surface
+        if (random.nextDouble() < 0.2) ore = Material.COAL_ORE;
+        else if (random.nextDouble() < 0.1) ore = Material.IRON_ORE;
     }
+
+    if (ore != null) {
+        loc.getBlock().setType(ore);
+    }
+}
+
     public void generateTerrain(Location center, int size) {
         // Calculate the half size of the island (radius from center)
         int half = size / 2;
