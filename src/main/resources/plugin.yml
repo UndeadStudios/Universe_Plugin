@@ -46,6 +46,12 @@ commands:
     permission: universe.trust
     permission-message: You don't have permission to trust other players on your island!
 
+  visit:
+    description: Allows You to visit other people's islands.
+    usage: /visit <player>
+    permission: universe.visit
+    permission-message: You don't have permission to visit other people's islands!
+
 permissions:
   universe.createisland:
     description: Allows players to create their own island.
@@ -73,4 +79,8 @@ permissions:
 
   universe.trust:
     description: Allows players to grant access to their island to others.
+    default: true
+
+  universe.visit:
+    description: Allows You to visit other people's islands.
     default: true

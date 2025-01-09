@@ -55,9 +55,9 @@ public class Universe extends JavaPlugin implements Listener {
         saveDefaultConfig();
         FileConfiguration config = getConfig();
 
-        islandSpacing = config.getInt("island.spacing", 600);
+        islandSpacing = config.getInt("island.spacing", 1012);
         defaultIslandSize = config.getInt("island.default_size", 32);
-        maxIslandSize = config.getInt("island.max_size", 512);
+        maxIslandSize = config.getInt("island.max_size", 128);
         spawnHeight = 57; // Spawn just above the grass block, which is at Y = 56
 
         // Initialize the BlockTracker listener
@@ -137,10 +137,7 @@ public class Universe extends JavaPlugin implements Listener {
             player.teleport(center.clone().add(0, 57, 0));
             islandBiomes.put(playerId, Biome.PLAINS);
             giveStarterChest(center);
-            generateTerrain(center, 32);
 
-            // Place trees during island generation
-            generateTrees(center, 32);
             player.sendMessage(ChatColor.GREEN + "Island created at your location!");
             return true;
         }
@@ -262,7 +259,30 @@ public class Universe extends JavaPlugin implements Listener {
             player.sendMessage(ChatColor.GREEN + "You have trusted " + targetPlayer.getName() + " to build on your island!");
             return true;
         }
+        if (command.getName().equalsIgnoreCase("visit")) {
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /visit <player>");
+                return true;
+            }
 
+            Player targetPlayer = Bukkit.getPlayer(args[0]);
+            if (targetPlayer == null) {
+                player.sendMessage(ChatColor.RED + "Player not found or not online.");
+                return true;
+            }
+
+            UUID targetPlayerId = targetPlayer.getUniqueId();
+
+            if (!islandCenters.containsKey(targetPlayerId)) {
+                player.sendMessage(ChatColor.RED + "This player does not have an island.");
+                return true;
+            }
+
+            Location targetIsland = islandCenters.get(targetPlayerId);
+            player.teleport(targetIsland.clone().add(0, 57, 0)); // Teleport just above the ground level
+            player.sendMessage(ChatColor.GREEN + "Teleported to " + targetPlayer.getName() + "'s island!");
+            return true;
+        }
         return false;
     }
     private void setBiome(Location center, int size, Biome biome) {
@@ -331,26 +351,16 @@ public class Universe extends JavaPlugin implements Listener {
                                 else if (y == 56) {
                                     loc.getBlock().setType(Material.GRASS_BLOCK);
                                 }
-                                // Set air for any other blocks (this would be redundant as we're checking for air above)
-                                else {
-                                    loc.getBlock().setType(Material.AIR);
-                                }
+
                             }
                         }
                     }
                 }
-
+                // Place trees during island generation
+                generateTrees(center, size);
 
                 // Save island center and size to the config after generating
                 saveIslandData(playerId, center, size);
-                // Set the world border
-                World world = Bukkit.getWorld("universe_world");
-                if (world != null) {
-                    // Set the world border's center and size to match the island's size
-                    WorldBorder border = world.getWorldBorder();
-                    border.setCenter(center);
-                    border.setSize(size); // Set the island's size as the border size
-                }
             }
         }.runTask(this); // Run this task on the main thread
     }
@@ -417,49 +427,75 @@ public class Universe extends JavaPlugin implements Listener {
         World world = center.getWorld();
         Random random = new Random();
 
-        // Generate a random number of trees between 5 and 25
-        int maxTrees = 2 + random.nextInt(20);
+        // Number of trees to generate (between 5 and 25)
+        int maxTrees = 5 + random.nextInt(21); // 5 to 25 trees
+        int treeCount = maxTrees;
 
-        int treeCount = 0; // Counter for the number of trees generated
+        // Tree types, including small and large trees
+        TreeType[] treeTypes = {
+                TreeType.TREE, // Standard oak
+                TreeType.BIRCH, // Standard birch
+                TreeType.BIG_TREE, // Larger oak
+                TreeType.TALL_BIRCH // Taller birch
+        };
 
-        // Loop through the area around the center point
-        for (int i = 1; i < maxTrees; i++) {
-            // Get random x and z within the island's size
+        for (int i = 5; i < maxTrees; i++) {
+            // Random offsets within the island size
             int xOffset = random.nextInt(size) - size / 2;
             int zOffset = random.nextInt(size) - size / 2;
 
-            // Calculate the location for the potential tree position
+            // Calculate tree location
             Location treeLocation = center.clone().add(xOffset, 57, zOffset);
-            // Get the block at the calculated X, Y, Z location
-            Block block = world.getBlockAt(treeLocation);
-            // Skip the block if it is a chest
-            if (block.getType() == Material.CHEST) {
-                continue;  // Skip this block and move to the next one
-            }
 
-            // Find the ground level (solid block below height 57)
-            int groundY = world.getHighestBlockYAt(treeLocation.getBlockX(), treeLocation.getBlockZ());
+            // Find the highest solid block at X and Z coordinates
+            int groundY = (int) treeLocation.getY();
+            treeLocation.setY(groundY);
 
-            // Ensure the location is at Y=57 and there is solid ground below it
-            if (groundY == 57) {
-                block = world.getBlockAt(treeLocation);
-                if (block.getType() == Material.AIR) {
-                    // Check if the block below is solid (this ensures a tree doesn't spawn mid-air)
-                    Block blockBelow = world.getBlockAt(treeLocation.clone().add(0, -1, 0));
-                    if (blockBelow.getType() == Material.GRASS_BLOCK || blockBelow.getType() == Material.DIRT || blockBelow.getType() == Material.SAND) {
-                        // Random chance to place a tree (e.g., 70% chance)
-                        if (Math.random() < 1.0) {
-                            // Generate the tree
-                            world.generateTree(treeLocation, TreeType.TREE); // You can change TreeType if needed
-                            treeCount++; // Increment the tree counter
-                        }
+            // Check if the ground is suitable
+            Block groundBlock = world.getBlockAt(treeLocation.clone().add(0, 56, 0));
+            if (groundBlock.getType() == Material.GRASS_BLOCK || groundBlock.getType() == Material.DIRT || groundBlock.getType() == Material.SAND) {
+                // Ensure the area is clear for tree generation
+                if (isAreaClear(treeLocation, 5)) {
+                    // Randomly select a tree type (small or large, oak or birch)
+                    TreeType randomTree = treeTypes[random.nextInt(treeTypes.length)];
+
+                    // Attempt to generate the tree
+                    if (world.generateTree(treeLocation, randomTree)) {
+                        treeCount++; // Increment tree counter if successful
                     }
                 }
             }
         }
 
-        // Print a message with the number of trees generated
+        // Notify how many trees were generated
         System.out.println("Generated " + treeCount + " trees.");
+    }
+
+    /**
+     * Checks if the area around the location is clear for tree generation.
+     *
+     * @param location The center of the area to check.
+     * @param radius   The radius around the location to check.
+     * @return True if the area is clear, false otherwise.
+     */
+    private boolean isAreaClear(Location location, int radius) {
+        World world = location.getWorld();
+        int startX = location.getBlockX() - radius;
+        int endX = location.getBlockX() + radius;
+        int startZ = location.getBlockZ() - radius;
+        int endZ = location.getBlockZ() + radius;
+        int y = location.getBlockY();
+
+        // Check each block within the radius
+        for (int x = startX; x <= endX; x++) {
+            for (int z = startZ; z <= endZ; z++) {
+                Block block = world.getBlockAt(x, y, z);
+                if (!block.isEmpty()) {
+                    return false; // Found an obstruction
+                }
+            }
+        }
+        return true;
     }
 
     private void giveStarterChest(Location center) {

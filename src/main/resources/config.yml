@@ -1,5 +1,5 @@
 island:
-  spacing: 600
+  spacing: 1012
   default_size: 32
-  max_size: 512
+  max_size: 128
   spawn_height: 100
