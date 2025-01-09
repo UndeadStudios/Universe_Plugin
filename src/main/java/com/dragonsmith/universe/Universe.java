@@ -107,40 +107,43 @@ public class Universe extends JavaPlugin implements Listener {
         UUID playerId = player.getUniqueId();
 
         // Handle the "/createisland" command
-        if (command.getName().equalsIgnoreCase("createisland")) {
-            if (islandCenters.containsKey(playerId)) {
-                player.sendMessage(ChatColor.RED + "You already have an island!");
-                return true;
-            }
+if (command.getName().equalsIgnoreCase("createisland")) {
+    if (islandCenters.containsKey(playerId)) {
+        player.sendMessage(ChatColor.RED + "You already have an island!");
+        return true;
+    }
 
-            World world = Bukkit.getWorld("universe_world");
-            if (world == null) {
-                player.sendMessage(ChatColor.RED + "The world is not available!");
-                return true;
-            }
+    World world = Bukkit.getWorld("universe_world");
+    if (world == null) {
+        player.sendMessage(ChatColor.RED + "The world is not available!");
+        return true;
+    }
 
-            // Calculate the island location
-            Location center = new Location(world, nextIslandX, spawnHeight, nextIslandZ);
-            nextIslandX += islandSpacing;
-            if (nextIslandX > 6000) { // Wrap around after 10 islands horizontally
-                nextIslandX = 0;
-                nextIslandZ += islandSpacing;
-            }
+    // Calculate the island location
+    Location center = new Location(world, nextIslandX, spawnHeight, nextIslandZ);
+    nextIslandX += islandSpacing;
+    if (nextIslandX > 6000) { // Wrap around after 10 islands horizontally
+        nextIslandX = 0;
+        nextIslandZ += islandSpacing;
+    }
 
-            islandCenters.put(playerId, center);
-            islandSizes.put(playerId, defaultIslandSize); // Use the default size from config
-            islandGeneratorLevels.put(playerId, 1); // Default generator level is 1
+    // Assign ownership
+    islandCenters.put(playerId, center); // Link player ID to their island
+    islandSizes.put(playerId, defaultIslandSize);
+    islandGeneratorLevels.put(playerId, 1);
+    islandBiomes.put(playerId, Biome.PLAINS);
 
-            generateIsland(center, defaultIslandSize, playerId);
-            world.getChunkAt(center).load();  // Ensure the chunk at the center is loaded
-            // Teleport player just above the grass block (Y = 57)
-            player.teleport(center.clone().add(0, 57, 0));
-            islandBiomes.put(playerId, Biome.PLAINS);
-            giveStarterChest(center);
+    // Generate the island
+    generateIsland(center, defaultIslandSize, playerId);
+    world.getChunkAt(center).load(); // Load the chunk
+    player.teleport(center.clone().add(0, 57, 0));
+    giveStarterChest(center);
 
-            player.sendMessage(ChatColor.GREEN + "Island created at your location!");
-            return true;
-        }
+    // Notify the player
+    player.sendMessage(ChatColor.GREEN + "Island created successfully!");
+    player.sendMessage(ChatColor.GOLD + "You are now the owner of this island.");
+    return true;
+}
 
         // Handle the "/expandisland" command
         if (command.getName().equalsIgnoreCase("expandisland")) {
@@ -595,21 +598,22 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
         }
     }
 
-    // Get the owner of an island based on a block location
-    private UUID getIslandOwner(Location location) {
-        for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
-            UUID ownerId = entry.getKey();
-            Location islandCenter = entry.getValue();
-            int islandSize = islandSizes.get(ownerId);
-            int halfSize = islandSize / 2;
+private UUID getIslandOwner(Location location) {
+    for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
+        UUID ownerId = entry.getKey();
+        Location islandCenter = entry.getValue();
+        int islandSize = islandSizes.getOrDefault(ownerId, defaultIslandSize);
+        int halfSize = islandSize / 2;
 
-            if (Math.abs(location.getBlockX() - islandCenter.getBlockX()) <= halfSize &&
-                Math.abs(location.getBlockZ() - islandCenter.getBlockZ()) <= halfSize) {
-                return ownerId;
-            }
+        // Check if the location is within the bounds of the island
+        if (Math.abs(location.getBlockX() - islandCenter.getBlockX()) <= halfSize &&
+            Math.abs(location.getBlockZ() - islandCenter.getBlockZ()) <= halfSize) {
+            return ownerId;
         }
-        return null; // Return null if no owner is found
     }
+    return null; // No owner found
+}
+
     private void placeOreInCobblestone(Location location) {
         Random rand = new Random();
 
