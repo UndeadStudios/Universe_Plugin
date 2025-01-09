@@ -310,7 +310,7 @@ public class Universe extends JavaPlugin implements Listener {
 
     private void generateIsland(Location center, int size, UUID playerId) {
         int half = size / 2;
-
+   Random random = new Random();
         // Perform the island generation on the main thread to ensure block updates
         new BukkitRunnable() {
             @Override
@@ -357,7 +357,8 @@ public class Universe extends JavaPlugin implements Listener {
                     }
                 }
                 // Place trees during island generation
-                generateTrees(center, size);
+                    // Now generate trees on the island
+                    generateTrees(center, size, random);
 
                 // Save island center and size to the config after generating
                 saveIslandData(playerId, center, size);
@@ -423,53 +424,60 @@ public class Universe extends JavaPlugin implements Listener {
 
 
 
-    public void generateTrees(Location center, int size) {
-        World world = center.getWorld();
-        Random random = new Random();
+public void generateTrees(Location center, int size, Random random) {
+    World world = center.getWorld();
+    
+    // Number of trees to generate (between 5 and 25)
+    int maxTrees = 5 + random.nextInt(21); // Random tree count between 5 and 25
 
-        // Number of trees to generate (between 5 and 25)
-        int maxTrees = 5 + random.nextInt(21); // 5 to 25 trees
-        int treeCount = maxTrees;
+    // Tree types: oak, birch, jungle, etc.
+    TreeType[] treeTypes = {
+            TreeType.TREE,        // Standard oak
+            TreeType.BIRCH,       // Birch tree
+            TreeType.JUNGLE,      // Jungle tree
+            TreeType.REDWOOD,     // Redwood tree (very large)
+            TreeType.SMALL_JUNGLE // Smaller jungle tree
+    };
 
-        // Tree types, including small and large trees
-        TreeType[] treeTypes = {
-                TreeType.TREE, // Standard oak
-                TreeType.BIRCH, // Standard birch
-                TreeType.BIG_TREE, // Larger oak
-                TreeType.TALL_BIRCH // Taller birch
-        };
+    // Loop to generate trees
+    for (int i = 0; i < maxTrees; i++) {
+        // Random offsets within the island size (to avoid trees growing too close together)
+        int xOffset = random.nextInt(size) - size / 2;
+        int zOffset = random.nextInt(size) - size / 2;
 
-        for (int i = 5; i < maxTrees; i++) {
-            // Random offsets within the island size
-            int xOffset = random.nextInt(size) - size / 2;
-            int zOffset = random.nextInt(size) - size / 2;
+        // Calculate the tree location (Y coordinate will be at 57 for the island surface)
+        Location treeLocation = center.clone().add(xOffset, 57, zOffset);
+        
+        // Make sure the location is a valid place to grow a tree (ground block is dirt or grass)
+        Block groundBlock = world.getBlockAt(treeLocation.clone().add(0, -1, 0));  // Ground block just beneath the location
+        if (groundBlock.getType() == Material.GRASS_BLOCK || groundBlock.getType() == Material.DIRT) {
+            // Ensure there's space for tree generation (no other blocks or terrain issues)
+            if (isAreaClearForTree(world, treeLocation, 2)) {  // Check space for tree
+                // Randomly select a tree type (oak, birch, etc.)
+                TreeType selectedTree = treeTypes[random.nextInt(treeTypes.length)];
 
-            // Calculate tree location
-            Location treeLocation = center.clone().add(xOffset, 57, zOffset);
+                // Try to generate the tree
+                world.generateTree(treeLocation, selectedTree);
+            }
+        }
+    }
+}
 
-            // Find the highest solid block at X and Z coordinates
-            int groundY = (int) treeLocation.getY();
-            treeLocation.setY(groundY);
-
-            // Check if the ground is suitable
-            Block groundBlock = world.getBlockAt(treeLocation.clone().add(0, 56, 0));
-            if (groundBlock.getType() == Material.GRASS_BLOCK || groundBlock.getType() == Material.DIRT || groundBlock.getType() == Material.SAND) {
-                // Ensure the area is clear for tree generation
-                if (isAreaClear(treeLocation, 5)) {
-                    // Randomly select a tree type (small or large, oak or birch)
-                    TreeType randomTree = treeTypes[random.nextInt(treeTypes.length)];
-
-                    // Attempt to generate the tree
-                    if (world.generateTree(treeLocation, randomTree)) {
-                        treeCount++; // Increment tree counter if successful
-                    }
+private boolean isAreaClearForTree(World world, Location location, int radius) {
+    // Check if there are no solid blocks in the area where the tree would be placed
+    for (int x = -radius; x <= radius; x++) {
+        for (int z = -radius; z <= radius; z++) {
+            for (int y = -2; y <= 3; y++) {  // Check a 5x5x5 block area for block interference
+                Location checkLoc = location.clone().add(x, y, z);
+                if (!checkLoc.getBlock().getType().isAir()) {
+                    return false;  // Block is not air, so space is not clear
                 }
             }
         }
-
-        // Notify how many trees were generated
-        System.out.println("Generated " + treeCount + " trees.");
     }
+    return true;
+}
+
 
     /**
      * Checks if the area around the location is clear for tree generation.
