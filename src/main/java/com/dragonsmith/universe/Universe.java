@@ -563,40 +563,43 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
             }
         }
     }
-    // Block placement event to check if the player is allowed to build
-    @EventHandler
-    public void onBlockPlace(BlockPlaceEvent event) {
-        Player player = event.getPlayer();
-        UUID playerId = player.getUniqueId();
+@EventHandler
+public void onBlockPlace(BlockPlaceEvent event) {
+    Player player = event.getPlayer();
+    UUID playerId = player.getUniqueId();
+    Location blockLocation = event.getBlock().getLocation();
 
-        // Check if the player is trying to build on someone else's island
-        if (islandCenters.containsKey(playerId)) {
-            Location blockLocation = event.getBlock().getLocation();
-            UUID ownerId = getIslandOwner(blockLocation);
-
-            if (ownerId != null && !ownerId.equals(playerId) && !trustedPlayers.getOrDefault(ownerId, new HashSet<>()).contains(playerId)) {
-                event.setCancelled(true);
-                player.sendMessage(ChatColor.RED + "You cannot build here. You are not trusted on this island.");
-            }
+    UUID ownerId = getIslandOwner(blockLocation); // Get the island owner for the block's location
+    if (ownerId != null && !ownerId.equals(playerId)) {
+        // Check if the player is trusted
+        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+        if (!trusted.contains(playerId)) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot build here. You are not trusted on this island.");
         }
     }
+}
 
-    // Block interaction event (for chest opening, etc.)
-    @EventHandler
-    public void onPlayerInteract(PlayerInteractEvent event) {
-        Player player = event.getPlayer();
-        UUID playerId = player.getUniqueId();
+@EventHandler
+public void onPlayerInteract(PlayerInteractEvent event) {
+    Player player = event.getPlayer();
+    UUID playerId = player.getUniqueId();
 
-        if (event.getClickedBlock() != null && islandCenters.containsKey(playerId)) {
-            Location blockLocation = event.getClickedBlock().getLocation();
-            UUID ownerId = getIslandOwner(blockLocation);
+    if (event.getClickedBlock() != null) {
+        Location blockLocation = event.getClickedBlock().getLocation();
+        UUID ownerId = getIslandOwner(blockLocation); // Get the island owner for the block's location
 
-            if (ownerId != null && !ownerId.equals(playerId) && !trustedPlayers.getOrDefault(ownerId, new HashSet<>()).contains(playerId)) {
+        if (ownerId != null && !ownerId.equals(playerId)) {
+            // Check if the player is trusted
+            Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+            if (!trusted.contains(playerId)) {
                 event.setCancelled(true);
                 player.sendMessage(ChatColor.RED + "You cannot interact with this block. You are not trusted on this island.");
             }
         }
     }
+}
+
 
 private UUID getIslandOwner(Location location) {
     for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
