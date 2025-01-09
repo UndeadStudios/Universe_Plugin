@@ -370,29 +370,37 @@ private void generateIsland(Location center, int size, UUID playerId) {
         }
     }.runTask(this); // Run this task on the main thread
 }
-private void generateOres(Location loc, Random random, int y, Material baseMaterial) {
+private void generateOres(Location loc, Random random, int y) {
     Material ore = null;
 
-    if (y >= -64 && y <= -8) { // Deep underground
-        if (random.nextDouble() < 0.01) ore = Material.DIAMOND_ORE;
-        else if (random.nextDouble() < 0.05) ore = Material.REDSTONE_ORE;
-        else if (random.nextDouble() < 0.1) ore = Material.GOLD_ORE;
-        else if (random.nextDouble() < 0.15) ore = Material.IRON_ORE;
-        else if (random.nextDouble() < 0.2) ore = Material.LAPIS_ORE;
-    } else if (y >= -7 && y <= 15) { // Mid-level
-        if (random.nextDouble() < 0.01) ore = Material.DIAMOND_ORE;
-        else if (random.nextDouble() < 0.03) ore = Material.EMERALD_ORE;
-        else if (random.nextDouble() < 0.15) ore = Material.IRON_ORE;
-        else if (random.nextDouble() < 0.3) ore = Material.COAL_ORE;
-    } else if (y >= 16 && y <= 52) { // Near the surface
-        if (random.nextDouble() < 0.2) ore = Material.COAL_ORE;
-        else if (random.nextDouble() < 0.1) ore = Material.IRON_ORE;
+    if (y >= -64 && y <= -8) { // Deepslate layer (Deep underground)
+        if (random.nextDouble() < 0.005) ore = Material.DEEPSLATE_DIAMOND_ORE; // Very rare
+        else if (random.nextDouble() < 0.01) ore = Material.DEEPSLATE_EMERALD_ORE; // Rare
+        else if (random.nextDouble() < 0.05) ore = Material.DEEPSLATE_REDSTONE_ORE; // Uncommon
+        else if (random.nextDouble() < 0.07) ore = Material.DEEPSLATE_GOLD_ORE; // Uncommon
+        else if (random.nextDouble() < 0.1) ore = Material.DEEPSLATE_LAPIS_ORE; // Slightly less rare
+        else if (random.nextDouble() < 0.15) ore = Material.DEEPSLATE_COPPER_ORE; // Uncommon
+        else if (random.nextDouble() < 0.2) ore = Material.DEEPSLATE_IRON_ORE; // Common
+    } else if (y >= -7 && y <= 15) { // Stone + transitional layer
+        if (random.nextDouble() < 0.005) ore = Material.DIAMOND_ORE; // Very rare
+        else if (random.nextDouble() < 0.01) ore = Material.EMERALD_ORE; // Rare
+        else if (random.nextDouble() < 0.08) ore = Material.REDSTONE_ORE; // Uncommon
+        else if (random.nextDouble() < 0.12) ore = Material.GOLD_ORE; // Uncommon
+        else if (random.nextDouble() < 0.15) ore = Material.LAPIS_ORE; // Uncommon
+        else if (random.nextDouble() < 0.2) ore = Material.COPPER_ORE; // Common
+        else if (random.nextDouble() < 0.25) ore = Material.IRON_ORE; // Common
+    } else if (y >= 16 && y <= 52) { // Surface + near-surface layer
+        if (random.nextDouble() < 0.01) ore = Material.EMERALD_ORE; // Rare
+        else if (random.nextDouble() < 0.15) ore = Material.COAL_ORE; // Common
+        else if (random.nextDouble() < 0.1) ore = Material.IRON_ORE; // Common
+        else if (random.nextDouble() < 0.2) ore = Material.COPPER_ORE; // Common
     }
 
     if (ore != null) {
         loc.getBlock().setType(ore);
     }
 }
+
 
     public void generateTerrain(Location center, int size) {
         // Calculate the half size of the island (radius from center)
