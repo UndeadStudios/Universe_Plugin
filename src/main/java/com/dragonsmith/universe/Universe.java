@@ -232,36 +232,45 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             }
             return true;
         }
-        // Command to trust another player
-        if (command.getName().equalsIgnoreCase("trust")) {
-            if (args.length != 1) {
-                player.sendMessage(ChatColor.RED + "Usage: /trust <player>");
-                return true;
-            }
+    if (cmd.getName().equalsIgnoreCase("trust") && sender instanceof Player) {
+        Player player = (Player) sender;
+        UUID ownerId = player.getUniqueId();
 
-            Player targetPlayer = Bukkit.getPlayer(args[0]);
-            if (targetPlayer == null) {
+        if (args.length == 1) {
+            Player target = Bukkit.getPlayer(args[0]);
+            if (target != null) {
+                UUID targetId = target.getUniqueId();
+                trustedPlayers.computeIfAbsent(ownerId, k -> new HashSet<>()).add(targetId);
+                player.sendMessage(ChatColor.GREEN + target.getName() + " has been trusted on your island.");
+                saveIslandData(ownerId, islandCenters.get(ownerId), islandSizes.get(ownerId));
+            } else {
                 player.sendMessage(ChatColor.RED + "Player not found.");
-                return true;
             }
-
-            UUID targetPlayerId = targetPlayer.getUniqueId();
-            if (!islandCenters.containsKey(playerId)) {
-                player.sendMessage(ChatColor.RED + "You don't have an island to trust players on!");
-                return true;
-            }
-
-            // Ensure the island is owned by the current player
-            if (!islandCenters.get(playerId).equals(islandCenters.get(targetPlayerId))) {
-                player.sendMessage(ChatColor.RED + "This player does not have an island.");
-                return true;
-            }
-
-            // Add the player to the trusted list
-            trustedPlayers.computeIfAbsent(playerId, k -> new HashSet<>()).add(targetPlayerId);
-            player.sendMessage(ChatColor.GREEN + "You have trusted " + targetPlayer.getName() + " to build on your island!");
             return true;
         }
+    }
+if (cmd.getName().equalsIgnoreCase("untrust") && sender instanceof Player) {
+    Player player = (Player) sender;
+    UUID ownerId = player.getUniqueId();
+
+    if (args.length == 1) {
+        Player target = Bukkit.getPlayer(args[0]);
+        if (target != null) {
+            UUID targetId = target.getUniqueId();
+            Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+            if (trusted.remove(targetId)) {
+                player.sendMessage(ChatColor.YELLOW + target.getName() + " has been untrusted on your island.");
+                saveIslandData(ownerId, islandCenters.get(ownerId), islandSizes.get(ownerId));
+            } else {
+                player.sendMessage(ChatColor.RED + "That player was not trusted on your island.");
+            }
+        } else {
+            player.sendMessage(ChatColor.RED + "Player not found.");
+        }
+        return true;
+    }
+}
+
         if (command.getName().equalsIgnoreCase("visit")) {
             if (args.length != 1) {
                 player.sendMessage(ChatColor.RED + "Usage: /visit <player>");
@@ -562,25 +571,36 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
         chestInventory.addItem(new ItemStack(Material.BONE, 16));
     }
 
-    private void saveIslandData(UUID playerId, Location center, int size) {
-        // Save the island data (e.g., center, size) to a configuration or database
-        getConfig().set("islands." + playerId.toString() + ".center", center);
-        getConfig().set("islands." + playerId.toString() + ".size", size);
-        saveConfig();
-    }
+private void saveIslandData(UUID playerId, Location center, int size) {
+    getConfig().set("islands." + playerId + ".center", center);
+    getConfig().set("islands." + playerId + ".size", size);
 
-    private void loadIslandData() {
-        FileConfiguration config = getConfig();
-        if (config.contains("islands")) {
-            for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
-                UUID playerId = UUID.fromString(playerIdString);
-                Location center = (Location) config.get("islands." + playerId + ".center");
-                int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
-                islandCenters.put(playerId, center);
-                islandSizes.put(playerId, size);
-            }
+    // Save the trusted players list
+    Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
+    List<String> trustedList = trusted.stream().map(UUID::toString).toList();
+    getConfig().set("islands." + playerId + ".trusted", trustedList);
+
+    saveConfig();
+}
+
+private void loadIslandData() {
+    FileConfiguration config = getConfig();
+    if (config.contains("islands")) {
+        for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
+            UUID playerId = UUID.fromString(playerIdString);
+            Location center = (Location) config.get("islands." + playerId + ".center");
+            int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
+
+            islandCenters.put(playerId, center);
+            islandSizes.put(playerId, size);
+
+            // Load the trusted players list
+            List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
+            Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
+            trustedPlayers.put(playerId, trustedSet);
         }
     }
+}
     @EventHandler
     public void onBlockFromTo(BlockFromToEvent event) {
         Block block = event.getBlock();
@@ -597,6 +617,22 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
             }
         }
     }
+    @EventHandler
+public void onBlockBreak(BlockBreakEvent event) {
+    Player player = event.getPlayer();
+    UUID playerId = player.getUniqueId();
+    Location blockLocation = event.getBlock().getLocation();
+
+    UUID ownerId = getIslandOwner(blockLocation);
+    if (ownerId != null && !ownerId.equals(playerId)) {
+        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+        if (!trusted.contains(playerId)) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot break blocks here. You are not trusted on this island.");
+        }
+    }
+}
+
 @EventHandler
 public void onBlockPlace(BlockPlaceEvent event) {
     Player player = event.getPlayer();
@@ -621,10 +657,9 @@ public void onPlayerInteract(PlayerInteractEvent event) {
 
     if (event.getClickedBlock() != null) {
         Location blockLocation = event.getClickedBlock().getLocation();
-        UUID ownerId = getIslandOwner(blockLocation); // Get the island owner for the block's location
+        UUID ownerId = getIslandOwner(blockLocation);
 
         if (ownerId != null && !ownerId.equals(playerId)) {
-            // Check if the player is trusted
             Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
             if (!trusted.contains(playerId)) {
                 event.setCancelled(true);
