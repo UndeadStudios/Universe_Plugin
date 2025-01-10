@@ -151,8 +151,8 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                 player.sendMessage(ChatColor.RED + "You don't have an island yet!");
                 return true;
             }
-            if (economy.getBalance(player) < 1000) {
-                player.sendMessage(ChatColor.RED + "You need at least 1000 coins to create an island!");
+            if (economy.getBalance(player) < 50000 * islandSizes.get(playerId)) {
+                player.sendMessage(ChatColor.RED + "You need at least "+ 50000 * islandSizes.get(playerId)+" coins to expand the realm!");
                 return true;
             }
             int currentSize = islandSizes.get(playerId);
@@ -162,7 +162,7 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                 player.sendMessage(ChatColor.RED + "Maximum island size reached!");
                 return true;
             }
-            economy.withdrawPlayer(player, 1000);
+            economy.withdrawPlayer(player, 50000 * islandSizes.get(playerId));
             Location center = islandCenters.get(playerId);
             generateIsland(center, newSize, playerId);
             islandSizes.put(playerId, newSize);
