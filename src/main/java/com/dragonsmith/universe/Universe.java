@@ -10,6 +10,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.Listener;
@@ -23,6 +24,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.block.Chest;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Universe extends JavaPlugin implements Listener {
 
@@ -146,44 +148,47 @@ if (command.getName().equalsIgnoreCase("createisland")) {
     player.sendMessage(ChatColor.GOLD + "You are now the owner of this island.");
     return true;
 }
-if (command.getName().equalsIgnoreCase("deleteisland")) {
-    if (!islandCenters.containsKey(playerId)) {
-        player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
-        return true;
-    }
-
-    World world = Bukkit.getWorld("universe_world");
-    if (world == null) {
-        player.sendMessage(ChatColor.RED + "The world is not available!");
-        return true;
-    }
-
-    // Get island details
-    Location center = islandCenters.get(playerId);
-    int size = islandSizes.get(playerId);
-
-    // Regenerate the area to void
-    for (int x = center.getBlockX() - size / 2; x <= center.getBlockX() + size / 2; x += 16) {
-        for (int z = center.getBlockZ() - size / 2; z <= center.getBlockZ() + size / 2; z += 16) {
-            Chunk chunk = world.getChunkAt(x >> 4, z >> 4);
-            if (chunk.isLoaded()) {
-                chunk.unload(true); // Unload and save current chunk data
+        if (command.getName().equalsIgnoreCase("deleteisland")) {
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
+                return true;
             }
-            world.regenerateChunk(chunk.getX(), chunk.getZ()); // Regenerate chunk to void
+
+            World world = Bukkit.getWorld("universe_world");
+            if (world == null) {
+                player.sendMessage(ChatColor.RED + "The world is not available!");
+                return true;
+            }
+
+            // Get island details
+            Location center = islandCenters.get(playerId);
+            int size = islandSizes.get(playerId);
+
+            // Clear the island area
+            int startX = center.getBlockX() - size / 2;
+            int endX = center.getBlockX() + size / 2;
+            int startZ = center.getBlockZ() - size / 2;
+            int endZ = center.getBlockZ() + size / 2;
+
+            for (int x = startX; x <= endX; x++) {
+                for (int z = startZ; z <= endZ; z++) {
+                    for (int y = 0; y < 256; y++) { // Clear from bottom to top of the world
+                        world.getBlockAt(x, y, z).setType(Material.AIR);
+                    }
+                }
+            }
+
+            // Remove player's island data
+            islandCenters.remove(playerId);
+            islandSizes.remove(playerId);
+            islandGeneratorLevels.remove(playerId);
+            islandBiomes.remove(playerId);
+
+            // Notify the player
+            player.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
+            player.teleport(world.getSpawnLocation()); // Teleport the player to the world's spawn location
+            return true;
         }
-    }
-
-    // Remove player's island data
-    islandCenters.remove(playerId);
-    islandSizes.remove(playerId);
-    islandGeneratorLevels.remove(playerId);
-    islandBiomes.remove(playerId);
-
-    // Notify the player
-    player.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
-    player.teleport(world.getSpawnLocation()); // Teleport the player to the spawn location
-    return true;
-}
 
         // Handle the "/expandisland" command
         if (command.getName().equalsIgnoreCase("expandisland")) {
@@ -272,25 +277,33 @@ if (command.getName().equalsIgnoreCase("deleteisland")) {
             }
             return true;
         }
-    if (cmd.getName().equalsIgnoreCase("trust") && sender instanceof Player) {
-        Player player = (Player) sender;
-        UUID ownerId = player.getUniqueId();
+        if (command.getName().equalsIgnoreCase("trust") && sender instanceof Player) {
+            player = (Player) sender;
+            UUID ownerId = player.getUniqueId();
 
-        if (args.length == 1) {
-            Player target = Bukkit.getPlayer(args[0]);
-            if (target != null) {
-                UUID targetId = target.getUniqueId();
-                trustedPlayers.computeIfAbsent(ownerId, k -> new HashSet<>()).add(targetId);
-                player.sendMessage(ChatColor.GREEN + target.getName() + " has been trusted on your island.");
-                saveIslandData(ownerId, islandCenters.get(ownerId), islandSizes.get(ownerId));
-            } else {
-                player.sendMessage(ChatColor.RED + "Player not found.");
+            if (args.length == 1) {
+                Player target = Bukkit.getPlayer(args[0]);
+                if (target != null) {
+                    UUID targetId = target.getUniqueId();
+
+                    // Check if the player is trying to trust themselves
+                    if (ownerId.equals(targetId)) {
+                        player.sendMessage(ChatColor.RED + "You cannot trust yourself on your own island.");
+                        return true; // Exit the command
+                    }
+
+                    trustedPlayers.computeIfAbsent(ownerId, k -> new HashSet<>()).add(targetId);
+                    player.sendMessage(ChatColor.GREEN + target.getName() + " has been trusted on your island.");
+                    saveIslandData(ownerId, islandCenters.get(ownerId), islandSizes.get(ownerId));
+                } else {
+                    player.sendMessage(ChatColor.RED + "Player not found.");
+                }
+                return true;
             }
-            return true;
         }
-    }
-if (cmd.getName().equalsIgnoreCase("untrust") && sender instanceof Player) {
-    Player player = (Player) sender;
+
+if (command.getName().equalsIgnoreCase("untrust") && sender instanceof Player) {
+     player = (Player) sender;
     UUID ownerId = player.getUniqueId();
 
     if (args.length == 1) {
@@ -387,18 +400,18 @@ private void generateIsland(Location center, int size, UUID playerId) {
                             // Generate Deepslate from Y = -63 to Y = -6
                             else if (y >= -63 && y <= -6) {
                                 loc.getBlock().setType(Material.DEEPSLATE);
-                                generateOres(loc, random, y, Material.DEEPSLATE);
+                                generateOres(loc, random, y);
                             }
                             // Generate mixed Stone and Deepslate from Y = -5 to Y = 5
                             else if (y >= -5 && y <= 5) {
                                 Material material = Math.random() < 0.5 ? Material.DEEPSLATE : Material.STONE;
                                 loc.getBlock().setType(material);
-                                generateOres(loc, random, y, material);
+                                generateOres(loc, random, y);
                             }
                             // Generate Stone/Dirt from Y = 0 to Y = 55
                             else if (y >= 0 && y <= 52) {
                                 loc.getBlock().setType(Material.STONE);
-                                generateOres(loc, random, y, Material.STONE);
+                                generateOres(loc, random, y);
                             } else if (y >= 53 && y <= 55) {
                                 loc.getBlock().setType(Material.DIRT);
                             }
@@ -419,39 +432,40 @@ private void generateIsland(Location center, int size, UUID playerId) {
         }
     }.runTask(this); // Run this task on the main thread
 }
-private void generateOres(Location loc, Random random, int y) {
-    Material ore = null;
+    private void generateOres(Location loc, Random random, int y) {
+        Material ore = null;
 
-    if (y >= -64 && y <= -8) { // Deepslate layer (Deep underground)
-        if (random.nextDouble() < 0.005) ore = Material.DEEPSLATE_DIAMOND_ORE; // Very rare
-        else if (random.nextDouble() < 0.01) ore = Material.DEEPSLATE_EMERALD_ORE; // Rare
-        else if (random.nextDouble() < 0.05) ore = Material.DEEPSLATE_REDSTONE_ORE; // Uncommon
-        else if (random.nextDouble() < 0.07) ore = Material.DEEPSLATE_GOLD_ORE; // Uncommon
-        else if (random.nextDouble() < 0.1) ore = Material.DEEPSLATE_LAPIS_ORE; // Slightly less rare
-        else if (random.nextDouble() < 0.15) ore = Material.DEEPSLATE_COPPER_ORE; // Uncommon
-        else if (random.nextDouble() < 0.2) ore = Material.DEEPSLATE_IRON_ORE; // Common
-    } else if (y >= -7 && y <= 15) { // Stone + transitional layer
-        if (random.nextDouble() < 0.005) ore = Material.DIAMOND_ORE; // Very rare
-        else if (random.nextDouble() < 0.01) ore = Material.EMERALD_ORE; // Rare
-        else if (random.nextDouble() < 0.08) ore = Material.REDSTONE_ORE; // Uncommon
-        else if (random.nextDouble() < 0.12) ore = Material.GOLD_ORE; // Uncommon
-        else if (random.nextDouble() < 0.15) ore = Material.LAPIS_ORE; // Uncommon
-        else if (random.nextDouble() < 0.2) ore = Material.COPPER_ORE; // Common
-        else if (random.nextDouble() < 0.25) ore = Material.IRON_ORE; // Common
-    } else if (y >= 16 && y <= 52) { // Surface + near-surface layer
-        if (random.nextDouble() < 0.01) ore = Material.EMERALD_ORE; // Rare
-        else if (random.nextDouble() < 0.15) ore = Material.COAL_ORE; // Common
-        else if (random.nextDouble() < 0.1) ore = Material.IRON_ORE; // Common
-        else if (random.nextDouble() < 0.2) ore = Material.COPPER_ORE; // Common
+        if (y >= -64 && y <= -8) { // Deepslate layer (Deep underground)
+            if (random.nextDouble() < 0.001) ore = Material.DEEPSLATE_DIAMOND_ORE; // Extremely rare (0.1%)
+            else if (random.nextDouble() < 0.0015) ore = Material.DEEPSLATE_EMERALD_ORE; // Extremely rare (0.15%)
+            else if (random.nextDouble() < 0.005) ore = Material.DEEPSLATE_REDSTONE_ORE; // Rare (0.5%)
+            else if (random.nextDouble() < 0.01) ore = Material.DEEPSLATE_GOLD_ORE; // Rare (1%)
+            else if (random.nextDouble() < 0.015) ore = Material.DEEPSLATE_LAPIS_ORE; // Less common (1.5%)
+            else if (random.nextDouble() < 0.02) ore = Material.DEEPSLATE_COPPER_ORE; // Less common (2%)
+            else if (random.nextDouble() < 0.03) ore = Material.DEEPSLATE_IRON_ORE; // Common (3%)
+        } else if (y >= -7 && y <= 15) { // Stone + transitional layer
+            if (random.nextDouble() < 0.0005) ore = Material.DIAMOND_ORE; // Extremely rare (0.05%)
+            else if (random.nextDouble() < 0.001) ore = Material.EMERALD_ORE; // Extremely rare (0.1%)
+            else if (random.nextDouble() < 0.002) ore = Material.REDSTONE_ORE; // Rare (0.2%)
+            else if (random.nextDouble() < 0.005) ore = Material.GOLD_ORE; // Rare (0.5%)
+            else if (random.nextDouble() < 0.01) ore = Material.LAPIS_ORE; // Less common (1%)
+            else if (random.nextDouble() < 0.015) ore = Material.COPPER_ORE; // Common (1.5%)
+            else if (random.nextDouble() < 0.02) ore = Material.IRON_ORE; // Common (2%)
+        } else if (y >= 16 && y <= 52) { // Surface + near-surface layer
+            if (random.nextDouble() < 0.0003) ore = Material.EMERALD_ORE; // Extremely rare (0.03%)
+            else if (random.nextDouble() < 0.005) ore = Material.COAL_ORE; // Common (0.5%)
+            else if (random.nextDouble() < 0.01) ore = Material.IRON_ORE; // Less common (1%)
+            else if (random.nextDouble() < 0.015) ore = Material.COPPER_ORE; // Common (1.5%)
+        }
+
+        if (ore != null) {
+            loc.getBlock().setType(ore);
+        }
     }
 
-    if (ore != null) {
-        loc.getBlock().setType(ore);
-    }
-}
 
 
-    public void generateTerrain(Location center, int size) {
+            public void generateTerrain(Location center, int size) {
         // Calculate the half size of the island (radius from center)
         int half = size / 2;
         World world = center.getWorld();
@@ -611,36 +625,62 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
         chestInventory.addItem(new ItemStack(Material.BONE, 16));
     }
 
-private void saveIslandData(UUID playerId, Location center, int size) {
-    getConfig().set("islands." + playerId + ".center", center);
-    getConfig().set("islands." + playerId + ".size", size);
+    private void saveIslandData(UUID playerId, Location center, int size) {
+        // Serialize the Location to a map
+        Map<String, Object> centerMap = new HashMap<>();
+        centerMap.put("world", center.getWorld().getName());
+        centerMap.put("x", center.getX());
+        centerMap.put("y", center.getY());
+        centerMap.put("z", center.getZ());
+        centerMap.put("yaw", center.getYaw());
+        centerMap.put("pitch", center.getPitch());
 
-    // Save the trusted players list
-    Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
-    List<String> trustedList = trusted.stream().map(UUID::toString).toList();
-    getConfig().set("islands." + playerId + ".trusted", trustedList);
+        // Save center and size
+        getConfig().set("islands." + playerId + ".center", centerMap);
+        getConfig().set("islands." + playerId + ".size", size);
 
-    saveConfig();
-}
+        // Save the trusted players list
+        Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
+        List<String> trustedList = trusted.stream().map(UUID::toString).toList();
+        getConfig().set("islands." + playerId + ".trusted", trustedList);
 
-private void loadIslandData() {
-    FileConfiguration config = getConfig();
-    if (config.contains("islands")) {
-        for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
-            UUID playerId = UUID.fromString(playerIdString);
-            Location center = (Location) config.get("islands." + playerId + ".center");
-            int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
+        saveConfig();
+    }
 
-            islandCenters.put(playerId, center);
-            islandSizes.put(playerId, size);
+    private void loadIslandData() {
+        FileConfiguration config = getConfig();
+        if (config.contains("islands")) {
+            for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
+                UUID playerId = UUID.fromString(playerIdString);
 
-            // Load the trusted players list
-            List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
-            Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
-            trustedPlayers.put(playerId, trustedSet);
+                // Deserialize the Location
+                Map<String, Object> centerMap = config.getConfigurationSection("islands." + playerId + ".center").getValues(false);
+                String worldName = (String) centerMap.get("world");
+                World world = Bukkit.getWorld(worldName);
+                if (world == null) continue; // Handle missing world gracefully
+                double x = (double) centerMap.get("x");
+                double y = (double) centerMap.get("y");
+                double z = (double) centerMap.get("z");
+                float yaw = ((Number) centerMap.get("yaw")).floatValue();
+                float pitch = ((Number) centerMap.get("pitch")).floatValue();
+
+                Location center = new Location(world, x, y, z, yaw, pitch);
+
+                // Load size
+                int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
+
+                // Store data
+                islandCenters.put(playerId, center);
+                islandSizes.put(playerId, size);
+
+                // Load the trusted players list
+                List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
+                Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
+                trustedPlayers.put(playerId, trustedSet);
+            }
         }
     }
-}
+
     @EventHandler
     public void onBlockFromTo(BlockFromToEvent event) {
         Block block = event.getBlock();
@@ -658,73 +698,98 @@ private void loadIslandData() {
         }
     }
     @EventHandler
-public void onBlockBreak(BlockBreakEvent event) {
-    Player player = event.getPlayer();
-    UUID playerId = player.getUniqueId();
-    Location blockLocation = event.getBlock().getLocation();
+    public void onBlockBreak(BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+        Location blockLocation = event.getBlock().getLocation();
 
-    UUID ownerId = getIslandOwner(blockLocation);
-    if (ownerId != null && !ownerId.equals(playerId)) {
-        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
-        if (!trusted.contains(playerId)) {
-            event.setCancelled(true);
-            player.sendMessage(ChatColor.RED + "You cannot break blocks here. You are not trusted on this island.");
-        }
-    }
-}
-
-@EventHandler
-public void onBlockPlace(BlockPlaceEvent event) {
-    Player player = event.getPlayer();
-    UUID playerId = player.getUniqueId();
-    Location blockLocation = event.getBlock().getLocation();
-
-    UUID ownerId = getIslandOwner(blockLocation); // Get the island owner for the block's location
-    if (ownerId != null && !ownerId.equals(playerId)) {
-        // Check if the player is trusted
-        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
-        if (!trusted.contains(playerId)) {
-            event.setCancelled(true);
-            player.sendMessage(ChatColor.RED + "You cannot build here. You are not trusted on this island.");
-        }
-    }
-}
-
-@EventHandler
-public void onPlayerInteract(PlayerInteractEvent event) {
-    Player player = event.getPlayer();
-    UUID playerId = player.getUniqueId();
-
-    if (event.getClickedBlock() != null) {
-        Location blockLocation = event.getClickedBlock().getLocation();
         UUID ownerId = getIslandOwner(blockLocation);
+        if (ownerId == null || !ownerId.equals(playerId)) {
+            // Check if the block is outside any island or on another player's island
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot break blocks outside your island.");
+            return;
+        }
 
-        if (ownerId != null && !ownerId.equals(playerId)) {
+        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+        if (!trusted.contains(playerId)) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot modify blocks on this island. You are not trusted.");
+        }
+
+    }
+
+
+    @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+        Location blockLocation = event.getBlock().getLocation();
+
+        UUID ownerId = getIslandOwner(blockLocation);
+        if (ownerId == null || !ownerId.equals(playerId)) {
+            // Check if the block is outside any island or on another player's island
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot build outside your island.");
+            return;
+        }
+
+        // Additional checks for trusted players (if needed)
+        Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
+        if (!trusted.contains(playerId)) {
+            event.setCancelled(true);
+            player.sendMessage(ChatColor.RED + "You cannot modify blocks on this island. You are not trusted.");
+        }
+
+    }
+
+
+    @EventHandler
+    public void onPlayerInteract(PlayerInteractEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+
+        if (event.getClickedBlock() != null) {
+            Location blockLocation = event.getClickedBlock().getLocation();
+            UUID ownerId = getIslandOwner(blockLocation);
+
+            if (ownerId == null || !ownerId.equals(playerId)) {
+                // Check if the interaction is outside any island or on another player's island
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "You cannot interact with blocks outside your island.");
+                return;
+            }
+
+            // Additional checks for trusted players (if needed)
             Set<UUID> trusted = trustedPlayers.getOrDefault(ownerId, new HashSet<>());
             if (!trusted.contains(playerId)) {
                 event.setCancelled(true);
-                player.sendMessage(ChatColor.RED + "You cannot interact with this block. You are not trusted on this island.");
+                player.sendMessage(ChatColor.RED + "You cannot modify blocks on this island. You are not trusted.");
+            }
+
+        }
+    }
+
+
+
+    private UUID getIslandOwner(Location location) {
+        for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
+            UUID ownerId = entry.getKey();
+            Location islandCenter = entry.getValue();
+            int islandSize = islandSizes.getOrDefault(ownerId, defaultIslandSize);
+            int halfSize = islandSize / 2;
+
+            // Check if the location is within the bounds of the island
+            if (location.getX() >= islandCenter.getX() - halfSize &&
+                    location.getX() <= islandCenter.getX() + halfSize &&
+                    location.getZ() >= islandCenter.getZ() - halfSize &&
+                    location.getZ() <= islandCenter.getZ() + halfSize) {
+                return ownerId;
             }
         }
+        return null; // No owner found
     }
-}
 
-
-private UUID getIslandOwner(Location location) {
-    for (Map.Entry<UUID, Location> entry : islandCenters.entrySet()) {
-        UUID ownerId = entry.getKey();
-        Location islandCenter = entry.getValue();
-        int islandSize = islandSizes.getOrDefault(ownerId, defaultIslandSize);
-        int halfSize = islandSize / 2;
-
-        // Check if the location is within the bounds of the island
-        if (Math.abs(location.getBlockX() - islandCenter.getBlockX()) <= halfSize &&
-            Math.abs(location.getBlockZ() - islandCenter.getBlockZ()) <= halfSize) {
-            return ownerId;
-        }
-    }
-    return null; // No owner found
-}
 
     private void placeOreInCobblestone(Location location) {
         Random rand = new Random();

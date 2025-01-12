@@ -46,6 +46,12 @@ commands:
     permission: universe.trust
     permission-message: You don't have permission to trust other players on your island!
 
+  untrust:
+    description: Grants another player access to your island.
+    usage: /untrust <player>
+    permission: universe.untrust
+    permission-message: You don't have permission to untrust other players on your island!
+
   visit:
     description: Allows You to visit other people's islands.
     usage: /visit <player>
@@ -79,6 +85,10 @@ permissions:
 
   universe.trust:
     description: Allows players to grant access to their island to others.
+    default: true
+
+  universe.untrust:
+    description: Allows players to remove access to their island to others.
     default: true
 
   universe.visit:
