@@ -146,6 +146,44 @@ if (command.getName().equalsIgnoreCase("createisland")) {
     player.sendMessage(ChatColor.GOLD + "You are now the owner of this island.");
     return true;
 }
+if (command.getName().equalsIgnoreCase("deleteisland")) {
+    if (!islandCenters.containsKey(playerId)) {
+        player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
+        return true;
+    }
+
+    World world = Bukkit.getWorld("universe_world");
+    if (world == null) {
+        player.sendMessage(ChatColor.RED + "The world is not available!");
+        return true;
+    }
+
+    // Get island details
+    Location center = islandCenters.get(playerId);
+    int size = islandSizes.get(playerId);
+
+    // Regenerate the area to void
+    for (int x = center.getBlockX() - size / 2; x <= center.getBlockX() + size / 2; x += 16) {
+        for (int z = center.getBlockZ() - size / 2; z <= center.getBlockZ() + size / 2; z += 16) {
+            Chunk chunk = world.getChunkAt(x >> 4, z >> 4);
+            if (chunk.isLoaded()) {
+                chunk.unload(true); // Unload and save current chunk data
+            }
+            world.regenerateChunk(chunk.getX(), chunk.getZ()); // Regenerate chunk to void
+        }
+    }
+
+    // Remove player's island data
+    islandCenters.remove(playerId);
+    islandSizes.remove(playerId);
+    islandGeneratorLevels.remove(playerId);
+    islandBiomes.remove(playerId);
+
+    // Notify the player
+    player.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
+    player.teleport(world.getSpawnLocation()); // Teleport the player to the spawn location
+    return true;
+}
 
         // Handle the "/expandisland" command
         if (command.getName().equalsIgnoreCase("expandisland")) {
