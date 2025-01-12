@@ -71,7 +71,9 @@ public class Universe extends JavaPlugin implements Listener {
         worldCreator.generator(new EmptyWorldGenerator());
         World world = worldCreator.createWorld();
         if (world != null) {
-            world.setSpawnFlags(false, false);
+         world.setMonsterSpawnLimit(70); // Adjust as needed
+        world.setAnimalSpawnLimit(10); // Adjust as needed
+        world.setSpawnFlags(true, true); // Enable mob spawning
         }
 
         // Load island data for all players
