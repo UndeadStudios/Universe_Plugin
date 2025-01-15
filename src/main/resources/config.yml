@@ -1,5 +1,23 @@
-island:
-  spacing: 1012
-  default_size: 32
-  max_size: 128
-  spawn_height: 100
+# Default configuration for Islands plugin
+
+# Islands configuration section
+islands:
+  # Example of a player island data (this will be populated dynamically)
+  "example-uuid":
+    center:
+      world: "world"  # The world where the island is located
+      x: 0.0  # X coordinate of the island center
+      y: 64.0  # Y coordinate of the island center (usually on the ground level)
+      z: 0.0  # Z coordinate of the island center
+      yaw: 0.0  # Yaw orientation of the player (rotation around vertical axis)
+      pitch: 0.0  # Pitch orientation of the player (up/down rotation)
+    size: 100  # Size of the island
+    minX: -50  # Minimum X boundary
+    maxX: 50   # Maximum X boundary
+    minY: 0    # Minimum Y boundary
+    maxY: 255  # Maximum Y boundary
+    minZ: -50  # Minimum Z boundary
+    maxZ: 50   # Maximum Z boundary
+    trusted:
+      - "trusted-uuid-1"  # UUID of a player trusted to modify the island
+      - "trusted-uuid-2"  # UUID of another trusted player

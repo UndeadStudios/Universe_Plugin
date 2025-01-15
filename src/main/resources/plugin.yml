@@ -1,7 +1,7 @@
 name: universe
 version: 1.1
 main: com.dragonsmith.universe.Universe
-api-version: '1.21'
+api-version: '1.21'  # Confirm the correct API version for your server
 
 commands:
   createisland:
@@ -53,7 +53,7 @@ commands:
     permission-message: You don't have permission to untrust other players on your island!
 
   visit:
-    description: Allows You to visit other people's islands.
+    description: Allows you to visit other people's islands.
     usage: /visit <player>
     permission: universe.visit
     permission-message: You don't have permission to visit other people's islands!
@@ -92,5 +92,5 @@ permissions:
     default: true
 
   universe.visit:
-    description: Allows You to visit other people's islands.
+    description: Allows players to visit other people's islands.
     default: true
