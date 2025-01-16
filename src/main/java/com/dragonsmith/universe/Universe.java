@@ -106,20 +106,29 @@ public class Universe extends JavaPlugin implements Listener {
     }
 
 
-    @Override
-    public void onDisable() {
-        // Iterate over all stored island data and save it
-        for (UUID playerId : islandCenters.keySet()) {
+@Override
+public void onDisable() {
+    int savedIslands = 0;
+
+    for (UUID playerId : islandCenters.keySet()) {
+        try {
             Location center = islandCenters.get(playerId);
-            int size = islandSizes.getOrDefault(playerId, defaultIslandSize); // Provide a default size if needed
+            int size = islandSizes.getOrDefault(playerId, defaultIslandSize);
 
-            // Save the island data for each player
-            saveIslandData(playerId, center, size);
+            saveIslandData(playerId, center, size); // Save the island data
+            savedIslands++; // Increment the counter on successful save
+        } catch (Exception e) {
+            getLogger().severe("Failed to save island data for player: " + playerId + ". Error: " + e.getMessage());
         }
-
-        // Optionally log when the plugin is disabled
-        getLogger().info("Island data saved and plugin disabled.");
     }
+
+    // Clear memory if needed
+    islandCenters.clear();
+    islandSizes.clear();
+
+    getLogger().info("Saved " + savedIslands + " islands successfully. Plugin disabled.");
+}
+
 
 
     private boolean setupEconomy() {
@@ -181,56 +190,56 @@ if (command.getName().equalsIgnoreCase("createisland")) {
     player.sendMessage(ChatColor.GOLD + "You are now the owner of this island.");
     return true;
 }
-        if (command.getName().equalsIgnoreCase("deleteisland")) {
-            if (!islandCenters.containsKey(playerId)) {
-                player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
-                return true;
-            }
+if (command.getName().equalsIgnoreCase("deleteisland")) {
+    if (!islandCenters.containsKey(playerId)) {
+        player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
+        return true;
+    }
 
-            World world = Bukkit.getWorld("universe_world");
-            if (world == null) {
-                player.sendMessage(ChatColor.RED + "The world is not available!");
-                return true;
-            }
+    World world = Bukkit.getWorld("universe_world");
+    if (world == null) {
+        player.sendMessage(ChatColor.RED + "The world is not available!");
+        return true;
+    }
 
-            // Get island details
-            Location center = islandCenters.get(playerId);
-            int size = islandSizes.get(playerId);
+    // Get island details
+    Location center = islandCenters.get(playerId);
+    int size = islandSizes.get(playerId);
 
-            // Calculate the boundaries of the island correctly (adjusted for full size)
-            int startX = center.getBlockX() - (size / 2);
-            int endX = center.getBlockX() + (size / 2);  // Fix the off-by-one error
-            int startZ = center.getBlockZ() - (size / 2);
-            int endZ = center.getBlockZ() + (size / 2);  // Fix the off-by-one error
+    // Calculate the boundaries of the island correctly (adjusted for full size and extra 5 blocks)
+    int startX = center.getBlockX() - (size / 2) - 5; // Subtract 5 extra blocks
+    int endX = center.getBlockX() + (size / 2) + 5;   // Add 5 extra blocks
+    int startZ = center.getBlockZ() - (size / 2) - 5; // Subtract 5 extra blocks
+    int endZ = center.getBlockZ() + (size / 2) + 5;   // Add 5 extra blocks
 
-            // Perform block clearing in batches to avoid lag
-            Player finalPlayer = player;
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    for (int x = startX; x <= endX; x++) {
-                        for (int z = startZ; z <= endZ; z++) {
-                            // Clear blocks at each y level
-                            for (int y = -64; y < 256; y++) {
-                                world.getBlockAt(x, y, z).setType(Material.AIR);
-                            }
-                        }
+    // Perform block clearing in batches to avoid lag
+    Player finalPlayer = player;
+    new BukkitRunnable() {
+        @Override
+        public void run() {
+            for (int x = startX; x <= endX; x++) {
+                for (int z = startZ; z <= endZ; z++) {
+                    // Clear blocks at each y level
+                    for (int y = -64; y < 256; y++) {
+                        world.getBlockAt(x, y, z).setType(Material.AIR);
                     }
-
-                    // Remove player's island data after clearing
-                    islandCenters.remove(playerId);
-                    islandSizes.remove(playerId);
-                    islandGeneratorLevels.remove(playerId);
-                    islandBiomes.remove(playerId);
-
-                    // Notify the player
-                    finalPlayer.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
-                    finalPlayer.teleport(world.getSpawnLocation()); // Teleport the player to the world's spawn location
                 }
-            }.runTask(this);  // Run this task on the main server thread
+            }
 
-            return true;
+            // Remove player's island data after clearing
+            islandCenters.remove(playerId);
+            islandSizes.remove(playerId);
+            islandGeneratorLevels.remove(playerId);
+            islandBiomes.remove(playerId);
+
+            // Notify the player
+            finalPlayer.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
+            finalPlayer.teleport(world.getSpawnLocation()); // Teleport the player to the world's spawn location
         }
+    }.runTask(this);  // Run this task on the main server thread
+
+    return true;
+}
 
 
 
@@ -841,106 +850,116 @@ private boolean isAreaClearForTree(World world, Location location, int radius) {
         chestInventory.addItem(new ItemStack(Material.BONE, 16));
     }
 
-    private void saveIslandData(UUID playerId, Location center, int size) {
-        // Serialize the Location to a map
-        Map<String, Object> centerMap = new HashMap<>();
-        centerMap.put("world", center.getWorld().getName());
-        centerMap.put("x", center.getX());
-        centerMap.put("y", center.getY());
-        centerMap.put("z", center.getZ());
-        centerMap.put("yaw", center.getYaw());
-        centerMap.put("pitch", center.getPitch());
+private void saveIslandData(UUID playerId, Location center, int size) {
+    // Serialize the Location to a map
+    Map<String, Object> centerMap = new HashMap<>();
+    centerMap.put("world", center.getWorld().getName());
+    centerMap.put("x", center.getX());
+    centerMap.put("y", center.getY());
+    centerMap.put("z", center.getZ());
+    centerMap.put("yaw", center.getYaw());
+    centerMap.put("pitch", center.getPitch());
 
-        // Calculate the boundaries based on the center and size
-        int halfSize = size / 2;
-        int minX = center.getBlockX() - halfSize;
-        int maxX = center.getBlockX() + halfSize;
-        int minY = 0;  // Adjust if needed, e.g. bottom of the island
-        int maxY = 255; // Adjust if needed, e.g. top of the island
-        int minZ = center.getBlockZ() - halfSize;
-        int maxZ = center.getBlockZ() + halfSize;
+    // Calculate the boundaries
+    int halfSize = size / 2;
+    int minX = center.getBlockX() - halfSize;
+    int maxX = center.getBlockX() + halfSize;
+    int minY = 0;  // Adjust if needed
+    int maxY = 255; // Adjust if needed
+    int minZ = center.getBlockZ() - halfSize;
+    int maxZ = center.getBlockZ() + halfSize;
 
-        // Save the data to config
-        getConfig().set("islands." + playerId + ".center", centerMap);
-        getConfig().set("islands." + playerId + ".size", size);
-        getConfig().set("islands." + playerId + ".minX", minX);
-        getConfig().set("islands." + playerId + ".maxX", maxX);
-        getConfig().set("islands." + playerId + ".minY", minY);
-        getConfig().set("islands." + playerId + ".maxY", maxY);
-        getConfig().set("islands." + playerId + ".minZ", minZ);
-        getConfig().set("islands." + playerId + ".maxZ", maxZ);
+    // Save the data to config
+    getConfig().set("islands." + playerId + ".center", centerMap);
+    getConfig().set("islands." + playerId + ".size", size);
+    getConfig().set("islands." + playerId + ".minX", minX);
+    getConfig().set("islands." + playerId + ".maxX", maxX);
+    getConfig().set("islands." + playerId + ".minY", minY);
+    getConfig().set("islands." + playerId + ".maxY", maxY);
+    getConfig().set("islands." + playerId + ".minZ", minZ);
+    getConfig().set("islands." + playerId + ".maxZ", maxZ);
 
-        // Save the trusted players list
-        Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
-        List<String> trustedList = trusted.stream().map(UUID::toString).collect(Collectors.toList());
-        getConfig().set("islands." + playerId + ".trusted", trustedList);
+    // Save the trusted players list
+    Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
+    List<String> trustedList = trusted.stream().map(UUID::toString).collect(Collectors.toList());
+    getConfig().set("islands." + playerId + ".trusted", trustedList);
 
-        // Debugging: Log the saved data
-        getLogger().info("Saving island data for player " + playerId);
-        getLogger().info("Center: " + centerMap);
-        getLogger().info("Size: " + size);
-        getLogger().info("Bounds: " + minX + " to " + maxX + ", " + minY + " to " + maxY + ", " + minZ + " to " + maxZ);
-        getLogger().info("Trusted Players: " + trustedList);
-
-        // Save the config
-        saveConfig();
+    // Save the owner information
+    UUID ownerId = islandOwnershipMap.get(center);
+    if (ownerId != null) {
+        getConfig().set("islands." + playerId + ".owner", ownerId.toString());
+    } else {
+        getLogger().warning("No owner found for island at " + center + ". This might indicate an issue.");
     }
 
-    private void loadIslandData() {
-        FileConfiguration config = getConfig();
-        if (config.contains("islands")) {
-            for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
-                UUID playerId = UUID.fromString(playerIdString);
+    // Save the config
+    saveConfig();
+}
 
-                // Deserialize the Location
-                Map<String, Object> centerMap = config.getConfigurationSection("islands." + playerId + ".center").getValues(false);
-                String worldName = (String) centerMap.get("world");
-                World world = Bukkit.getWorld(worldName);
-                if (world == null) continue; // Handle missing world gracefully
-                double x = (double) centerMap.get("x");
-                double y = (double) centerMap.get("y");
-                double z = (double) centerMap.get("z");
-                float yaw = ((Number) centerMap.get("yaw")).floatValue();
-                float pitch = ((Number) centerMap.get("pitch")).floatValue();
 
-                Location center = new Location(world, x, y, z, yaw, pitch);
+private void loadIslandData() {
+    FileConfiguration config = getConfig();
+    if (config.contains("islands")) {
+        for (String playerIdString : config.getConfigurationSection("islands").getKeys(false)) {
+            UUID playerId = UUID.fromString(playerIdString);
 
-                // Load the size and boundaries
-                int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
-                int minX = config.getInt("islands." + playerId + ".minX", center.getBlockX() - size / 2);
-                int maxX = config.getInt("islands." + playerId + ".maxX", center.getBlockX() + size / 2);
-                int minY = config.getInt("islands." + playerId + ".minY", 0); // Default to 0
-                int maxY = config.getInt("islands." + playerId + ".maxY", 255); // Default to 255
-                int minZ = config.getInt("islands." + playerId + ".minZ", center.getBlockZ() - size / 2);
-                int maxZ = config.getInt("islands." + playerId + ".maxZ", center.getBlockZ() + size / 2);
+            // Deserialize the Location
+            Map<String, Object> centerMap = config.getConfigurationSection("islands." + playerId + ".center").getValues(false);
+            String worldName = (String) centerMap.get("world");
+            World world = Bukkit.getWorld(worldName);
+            if (world == null) continue; // Handle missing world gracefully
+            double x = (double) centerMap.get("x");
+            double y = (double) centerMap.get("y");
+            double z = (double) centerMap.get("z");
+            float yaw = ((Number) centerMap.get("yaw")).floatValue();
+            float pitch = ((Number) centerMap.get("pitch")).floatValue();
 
-                // Store data
-                islandCenters.put(playerId, center);
-                islandSizes.put(playerId, size);
-                islandMinX.put(playerId, minX);
-                islandMaxX.put(playerId, maxX);
-                islandMinY.put(playerId, minY);
-                islandMaxY.put(playerId, maxY);
-                islandMinZ.put(playerId, minZ);
-                islandMaxZ.put(playerId, maxZ);
+            Location center = new Location(world, x, y, z, yaw, pitch);
 
-                // Load the trusted players list
-                List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
-                Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
-                trustedPlayers.put(playerId, trustedSet);
+            // Load the size and boundaries
+            int size = config.getInt("islands." + playerId + ".size", defaultIslandSize);
+            int minX = config.getInt("islands." + playerId + ".minX", center.getBlockX() - size / 2);
+            int maxX = config.getInt("islands." + playerId + ".maxX", center.getBlockX() + size / 2);
+            int minY = config.getInt("islands." + playerId + ".minY", 0);
+            int maxY = config.getInt("islands." + playerId + ".maxY", 255);
+            int minZ = config.getInt("islands." + playerId + ".minZ", center.getBlockZ() - size / 2);
+            int maxZ = config.getInt("islands." + playerId + ".maxZ", center.getBlockZ() + size / 2);
 
-                // Debugging: Log the loaded data
-                getLogger().info("Loaded island data for player " + playerId);
-                getLogger().info("Center: " + center);
-                getLogger().info("Size: " + size);
-                getLogger().info("Bounds: " + minX + " to " + maxX + ", " + minY + " to " + maxY + ", " + minZ + " to " + maxZ);
-                getLogger().info("Trusted Players: " + trustedList);
+            // Store data
+            islandCenters.put(playerId, center);
+            islandSizes.put(playerId, size);
+            islandMinX.put(playerId, minX);
+            islandMaxX.put(playerId, maxX);
+            islandMinY.put(playerId, minY);
+            islandMaxY.put(playerId, maxY);
+            islandMinZ.put(playerId, minZ);
+            islandMaxZ.put(playerId, maxZ);
+
+            // Load the trusted players list
+            List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
+            Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
+            trustedPlayers.put(playerId, trustedSet);
+
+            // Load the owner information
+            String ownerIdString = config.getString("islands." + playerId + ".owner");
+            if (ownerIdString != null) {
+                UUID ownerId = UUID.fromString(ownerIdString);
+                islandOwnershipMap.put(center, ownerId);
+            } else {
+                getLogger().warning("Owner not found for island at " + center);
             }
-        } else {
-            getLogger().warning("No islands data found in the config.");
-        }
-    }
 
+            // Debugging: Log the loaded data
+            getLogger().info("Loaded island data for player " + playerId);
+            getLogger().info("Center: " + center);
+            getLogger().info("Size: " + size);
+            getLogger().info("Bounds: " + minX + " to " + maxX + ", " + minY + " to " + maxY + ", " + minZ + " to " + maxZ);
+            getLogger().info("Trusted Players: " + trustedList);
+        }
+    } else {
+        getLogger().warning("No islands data found in the config.");
+    }
+}
 
     @EventHandler
     public void onBlockFromTo(BlockFromToEvent event) {
