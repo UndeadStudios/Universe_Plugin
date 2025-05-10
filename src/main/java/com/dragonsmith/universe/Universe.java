@@ -94,7 +94,15 @@ public class Universe extends JavaPlugin implements Listener {
         }
 
         // Load island data for all players (island configuration should be loaded here)
-        loadIslandData();
+getServer().getPluginManager().registerEvents(new Listener() {
+    @EventHandler
+    public void onWorldLoad(WorldLoadEvent event) {
+        if (event.getWorld().getName().equalsIgnoreCase("universe_world")) {
+            getLogger().info("Universe world loaded via event. Now loading island data...");
+            loadIslandData();
+        }
+    }
+}, this);
 
         // Register command tab completers
         getCommand("createisland").setTabCompleter(this);
@@ -906,8 +914,11 @@ private void loadIslandData() {
             // Deserialize the Location
             Map<String, Object> centerMap = config.getConfigurationSection("islands." + playerId + ".center").getValues(false);
             String worldName = (String) centerMap.get("world");
-            World world = Bukkit.getWorld(worldName);
-            if (world == null) continue; // Handle missing world gracefully
+World world = Bukkit.getWorld(worldName);
+if (world == null) {
+    getLogger().severe("World '" + worldName + "' is not loaded. Island data for player " + playerId + " will not be restored!");
+    continue;
+}
             double x = (double) centerMap.get("x");
             double y = (double) centerMap.get("y");
             double z = (double) centerMap.get("z");
