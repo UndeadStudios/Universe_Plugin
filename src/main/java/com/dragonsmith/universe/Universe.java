@@ -69,6 +69,7 @@ public class Universe extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
+        giveUniverseMenuToOnlinePlayers();
         getServer().getPluginManager().registerEvents(this, this);
         // Load configuration
         if (!setupEconomy()) {
@@ -113,7 +114,52 @@ public class Universe extends JavaPlugin implements Listener {
                 }
             }
         }, this);
+        getServer().getPluginManager().registerEvents(new Listener() {
+            @EventHandler
+            public void onMenuOpen(PlayerInteractEvent event) {
+                Player player = event.getPlayer();
+                if (event.getItem() != null && event.getItem().getType() == Material.NETHER_STAR) {
+                    if (event.getItem().getItemMeta() != null && ChatColor.stripColor(event.getItem().getItemMeta().getDisplayName()).equalsIgnoreCase("Universe Menu")) {
+                        event.setCancelled(true);
+                        openUniverseMenu(player);
+                    }
+                }
+            }
+        }, this);
+        getServer().getPluginManager().registerEvents(new Listener() {
+            @EventHandler
+            public void onMenuClick(org.bukkit.event.inventory.InventoryClickEvent event) {
+                if (event.getView().getTitle().equals(ChatColor.DARK_PURPLE + "Universe Menu") || event.getView().getTitle().equals(ChatColor.RED + "Confirm Delete?")) {
+                    event.setCancelled(true);
+                    Player player = (Player) event.getWhoClicked();
+                    if (event.getCurrentItem() == null || !event.getCurrentItem().hasItemMeta()) return;
 
+                    String display = ChatColor.stripColor(event.getCurrentItem().getItemMeta().getDisplayName());
+
+                    switch (display.toLowerCase()) {
+                        case "confirm delete":
+                            player.performCommand("deleteisland confirm");
+                            break;
+                        case "create island":
+                            player.performCommand("createisland");
+                            break;
+                        case "delete island":
+                            openDeleteConfirmMenu(player);
+                            break;
+                        case "go home":
+                            player.performCommand("home");
+                            break;
+                        case "expand island":
+                            player.performCommand("expandisland");
+                            break;
+                        case "upgrade generator":
+                            player.performCommand("upgradegenerator");
+                            break;
+                    }
+                    player.closeInventory();
+                }
+            }
+        }, this);
         // Register commands
         getCommand("createisland").setTabCompleter(this);
         getCommand("expandisland").setTabCompleter(this);
@@ -149,7 +195,57 @@ public void onDisable() {
 }
 
 
+    private void giveUniverseMenuToOnlinePlayers() {
+        getServer().getScheduler().runTaskLater(this, () -> {
+            for (Player player : getServer().getOnlinePlayers()) {
+                giveUniverseMenuItem(player);
+            }
+        }, 20L);
+    }
 
+    private void openDeleteConfirmMenu(Player player) {
+        org.bukkit.inventory.Inventory confirmGui = getServer().createInventory(null, 9, ChatColor.RED + "Confirm Delete?");
+        confirmGui.setItem(4, createMenuItem(Material.TNT, ChatColor.RED + "Confirm Delete"));
+        player.openInventory(confirmGui);
+    }
+
+    private void openUniverseMenu(Player player) {
+        // Create 1-row GUI titled "Universe Menu"
+        org.bukkit.inventory.Inventory gui = getServer().createInventory(null, 9, ChatColor.DARK_PURPLE + "Universe Menu");
+
+        gui.setItem(0, createMenuItem(Material.GRASS_BLOCK, ChatColor.GREEN + "Create Island"));
+        gui.setItem(1, createMenuItem(Material.BARRIER, ChatColor.RED + "Delete Island"));
+        gui.setItem(2, createMenuItem(Material.OAK_DOOR, ChatColor.YELLOW + "Go Home"));
+        gui.setItem(3, createMenuItem(Material.IRON_BLOCK, ChatColor.AQUA + "Expand Island"));
+        gui.setItem(4, createMenuItem(Material.ANVIL, ChatColor.LIGHT_PURPLE + "Upgrade Generator"));
+
+        // Open the GUI for the player
+        player.openInventory(gui);
+    }
+
+    private org.bukkit.inventory.ItemStack createMenuItem(Material type, String name) {
+        org.bukkit.inventory.ItemStack item = new org.bukkit.inventory.ItemStack(type);
+        org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(name);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+
+private void giveUniverseMenuItem(Player player) {
+    org.bukkit.inventory.ItemStack menuItem = new org.bukkit.inventory.ItemStack(Material.NETHER_STAR);
+    org.bukkit.inventory.meta.ItemMeta meta = menuItem.getItemMeta();
+    if (meta != null) {
+        meta.setDisplayName(ChatColor.DARK_PURPLE + "Universe Menu");
+        menuItem.setItemMeta(meta);
+    }
+
+    if (!player.getInventory().contains(menuItem)) {
+        player.getInventory().addItem(menuItem);
+    }
+}
     private boolean setupEconomy() {
         RegisteredServiceProvider<Economy> rsp = getServer().getServicesManager().getRegistration(Economy.class);
         if (rsp == null) {
@@ -224,56 +320,59 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             }
             return true;
         }
-if (command.getName().equalsIgnoreCase("deleteisland")) {
-    if (!islandCenters.containsKey(playerId)) {
-        player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
-        return true;
-    }
+        if (command.getName().equalsIgnoreCase("deleteisland")) {
 
-    World world = Bukkit.getWorld("universe_world");
-    if (world == null) {
-        player.sendMessage(ChatColor.RED + "The world is not available!");
-        return true;
-    }
-
-    // Get island details
-    Location center = islandCenters.get(playerId);
-    int size = islandSizes.get(playerId);
-
-    // Calculate the boundaries of the island correctly (adjusted for full size and extra 5 blocks)
-    int startX = center.getBlockX() - (size / 2) - 5; // Subtract 5 extra blocks
-    int endX = center.getBlockX() + (size / 2) + 5;   // Add 5 extra blocks
-    int startZ = center.getBlockZ() - (size / 2) - 5; // Subtract 5 extra blocks
-    int endZ = center.getBlockZ() + (size / 2) + 5;   // Add 5 extra blocks
-
-    // Perform block clearing in batches to avoid lag
-    Player finalPlayer = player;
-    new BukkitRunnable() {
-        @Override
-        public void run() {
-            for (int x = startX; x <= endX; x++) {
-                for (int z = startZ; z <= endZ; z++) {
-                    // Clear blocks at each y level
-                    for (int y = -64; y < 256; y++) {
-                        world.getBlockAt(x, y, z).setType(Material.AIR);
-                    }
-                }
+            // Confirmation step
+            if (args.length == 0 || !args[0].equalsIgnoreCase("confirm")) {
+                player.sendMessage(ChatColor.RED + "Are you sure you want to delete your island?");
+                player.sendMessage(ChatColor.YELLOW + "Type /deleteisland confirm to permanently delete it.");
+                return true;
             }
 
-            // Remove player's island data after clearing
-            islandCenters.remove(playerId);
-            islandSizes.remove(playerId);
-            islandGeneratorLevels.remove(playerId);
-            islandBiomes.remove(playerId);
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't have an island to delete!");
+                return true;
+            }
 
-            // Notify the player
-            finalPlayer.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
-            finalPlayer.teleport(world.getSpawnLocation()); // Teleport the player to the world's spawn location
+            World world = Bukkit.getWorld("universe_world");
+            if (world == null) {
+                player.sendMessage(ChatColor.RED + "The world is not available!");
+                return true;
+            }
+
+            Location center = islandCenters.get(playerId);
+            int size = islandSizes.get(playerId);
+
+            int startX = center.getBlockX() - (size / 2) - 5;
+            int endX = center.getBlockX() + (size / 2) + 5;
+            int startZ = center.getBlockZ() - (size / 2) - 5;
+            int endZ = center.getBlockZ() + (size / 2) + 5;
+
+            Player finalPlayer = player;
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    for (int x = startX; x <= endX; x++) {
+                        for (int z = startZ; z <= endZ; z++) {
+                            for (int y = -64; y < 256; y++) {
+                                world.getBlockAt(x, y, z).setType(Material.AIR);
+                            }
+                        }
+                    }
+
+                    islandCenters.remove(playerId);
+                    islandSizes.remove(playerId);
+                    islandGeneratorLevels.remove(playerId);
+                    islandBiomes.remove(playerId);
+
+                    finalPlayer.sendMessage(ChatColor.GREEN + "Your island has been successfully deleted!");
+                    finalPlayer.teleport(world.getSpawnLocation());
+                }
+            }.runTask(this);
+
+            return true;
         }
-    }.runTask(this);  // Run this task on the main server thread
 
-    return true;
-}
 
 
 
