@@ -2,13 +2,13 @@ package com.dragonsmith.universe;
 
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.*;
-import org.bukkit.block.Biome;
-import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
+import org.bukkit.block.*;
+import org.bukkit.block.data.type.Ladder;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
@@ -21,11 +21,13 @@ import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.block.Chest;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -36,6 +38,9 @@ public class Universe extends JavaPlugin implements Listener {
     private final HashMap<UUID, Integer> islandGeneratorLevels = new HashMap<>(); // Track the level of ore generator
     private Set<UUID> ignoreClaims = new HashSet<>();
     private final Random random = new Random();
+    private final Map<UUID, Location[]> mineSelections = new HashMap<>();
+    private final Map<String, Location[]> definedMines = new HashMap<>();
+
 
     // Initialize the islandBiomes map if not already initialized
     // Map to store island ownership: Location -> Owner UUID
@@ -66,10 +71,14 @@ public class Universe extends JavaPlugin implements Listener {
     private int defaultIslandSize; // Loaded from config
     private int maxIslandSize; // Loaded from config
     private int spawnHeight; // Loaded from config
+    private File minesFile;
+    private FileConfiguration minesConfig;
 
     @Override
     public void onEnable() {
         giveUniverseMenuToOnlinePlayers();
+
+        scheduleMineResets();
         getServer().getPluginManager().registerEvents(this, this);
         // Load configuration
         if (!setupEconomy()) {
@@ -77,6 +86,22 @@ public class Universe extends JavaPlugin implements Listener {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+        if (!getDataFolder().exists()) {
+            getDataFolder().mkdirs();
+        }
+
+        // Load or create mines.yml
+        minesFile = new File(getDataFolder(), "mines.yml");
+        if (!minesFile.exists()) {
+            try {
+                minesFile.createNewFile();
+            } catch (IOException e) {
+                getLogger().severe("Could not create mines.yml!");
+                e.printStackTrace();
+            }
+        }
+
+        minesConfig = YamlConfiguration.loadConfiguration(minesFile);
 
         saveDefaultConfig();
         FileConfiguration config = getConfig();
@@ -160,13 +185,47 @@ public class Universe extends JavaPlugin implements Listener {
                 }
             }
         }, this);
+        getServer().getPluginManager().registerEvents(new Listener() {
+            @EventHandler
+            public void onWandClick(PlayerInteractEvent event) {
+                Player player = event.getPlayer();
+                ItemStack item = event.getItem();
+
+                if (item != null && item.getType() == Material.BLAZE_ROD && item.hasItemMeta()) {
+                    String name = ChatColor.stripColor(item.getItemMeta().getDisplayName());
+                    if (!"Mine Wand".equalsIgnoreCase(name)) return;
+
+                    event.setCancelled(true); // Prevent block placement
+
+                    Location clicked = event.getClickedBlock() != null ? event.getClickedBlock().getLocation() : null;
+                    if (clicked == null) return;
+
+                    UUID playerId = player.getUniqueId();
+                    Location[] selections = mineSelections.getOrDefault(playerId, new Location[2]);
+
+                    if (event.getAction().toString().contains("LEFT")) {
+                        selections[0] = clicked;
+                        player.sendMessage(ChatColor.YELLOW + "Position 1 set to " + formatLoc(clicked));
+                    } else if (event.getAction().toString().contains("RIGHT")) {
+                        selections[1] = clicked;
+                        player.sendMessage(ChatColor.YELLOW + "Position 2 set to " + formatLoc(clicked));
+                    }
+
+                    mineSelections.put(playerId, selections);
+                }
+            }
+        }, this);
+
         // Register commands
         getCommand("createisland").setTabCompleter(this);
         getCommand("expandisland").setTabCompleter(this);
         getCommand("balance").setTabCompleter(this);
         this.getCommand("setbiome").setTabCompleter(new SetBiomeTabCompleter());
         getCommand("ignoreclaims").setExecutor(this);
-
+        getCommand("islandinfo").setExecutor(this);
+        getCommand("wand").setExecutor(this);
+        getCommand("createmine").setExecutor(this);
+        getCommand("resetmine").setExecutor(this);
         getLogger().info("Universe plugin has been enabled!");
     }
 
@@ -193,6 +252,13 @@ public void onDisable() {
 
     getLogger().info("Saved " + savedIslands + " islands successfully. Plugin disabled.");
 }
+    private String formatLoc(Location loc) {
+        return ChatColor.GRAY + loc.getWorld().getName() +
+                ChatColor.WHITE + " (" +
+                loc.getBlockX() + ", " +
+                loc.getBlockY() + ", " +
+                loc.getBlockZ() + ")";
+    }
 
 
     private void giveUniverseMenuToOnlinePlayers() {
@@ -318,6 +384,221 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                 ignoreClaims.add(uuid);
                 player.sendMessage(ChatColor.GREEN + "You are now ignoring island claims.");
             }
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("resetmine")) {
+            if (!player.hasPermission("universe.resetmine")) {
+                player.sendMessage(ChatColor.RED + "You lack permission to reset mines.");
+                return true;
+            }
+
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /resetmine <ore|wood|nether>");
+                return true;
+            }
+
+            String mineName = args[0].toLowerCase();
+            if (!minesConfig.contains("mines." + mineName)) {
+                player.sendMessage(ChatColor.RED + "Mine '" + mineName + "' does not exist.");
+                return true;
+            }
+
+            String worldName = minesConfig.getString("mines." + mineName + ".world");
+
+            ConfigurationSection pos1Section = minesConfig.getConfigurationSection("mines." + mineName + ".pos1");
+            ConfigurationSection pos2Section = minesConfig.getConfigurationSection("mines." + mineName + ".pos2");
+
+            Location pos1 = deserializeLocation(pos1Section, worldName);
+            Location pos2 = deserializeLocation(pos2Section, worldName);
+
+
+            List<String> blockNames = minesConfig.getStringList("mines." + mineName + ".blocks");
+            List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).toList();
+
+            List<Material> fillerBlocks = switch (mineName) {
+                case "ore" ->
+                        Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
+                case "wood" ->
+                        Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
+                case "nether" ->
+                        Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                default -> Collections.singletonList(Material.STONE);
+            };
+
+            assert worldName != null;
+            World world = Bukkit.getWorld(worldName);
+            if (world == null || pos1 == null || pos2 == null) {
+                player.sendMessage(ChatColor.RED + "Failed to load mine world or positions.");
+                return true;
+            }
+
+            int minX = Math.min(pos1.getBlockX(), pos2.getBlockX()) + 2;
+            int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX()) - 2;
+            int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ()) + 2;
+            int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ()) - 2;
+            int baseY = Math.min(pos1.getBlockY(), pos2.getBlockY()) + 1;
+            int topY = baseY + 58;
+
+            Random rand = new Random();
+            for (int x = minX; x < maxX; x++) {
+                for (int z = minZ; z < maxZ; z++) {
+                    for (int y = baseY; y < topY; y++) {
+                        Material mat = rand.nextDouble() < 0.20
+                                ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
+                                : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
+                        world.getBlockAt(x, y, z).setType(mat);
+                    }
+                }
+            }
+
+            player.sendMessage(ChatColor.GREEN + "Mine '" + mineName + "' has been reset!");
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("createmine")) {
+            if (!player.hasPermission("universe.createmine")) {
+                player.sendMessage(ChatColor.RED + "You lack permission to create mines.");
+                return true;
+            }
+
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /createmine <ore|wood|nether>");
+                return true;
+            }
+
+            String name = args[0].toLowerCase();
+            if (!Arrays.asList("ore", "wood", "nether").contains(name)) {
+                player.sendMessage(ChatColor.RED + "Invalid mine type. Choose ore, wood, or nether.");
+                return true;
+            }
+
+            Location[] selections = mineSelections.get(playerId);
+            if (selections == null || selections[0] == null || selections[1] == null) {
+                player.sendMessage(ChatColor.RED + "Select two corners with the Mine Wand first.");
+                return true;
+            }
+
+            Location pos1 = selections[0].clone();
+            Location pos2 = selections[1].clone();
+            World world = pos1.getWorld();
+
+            int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
+            int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
+            int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
+            int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
+            int baseY = Math.min(pos1.getBlockY(), pos2.getBlockY());
+            int topY = baseY + 59;
+
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    world.getBlockAt(x, baseY, z).setType(Material.BEDROCK);
+                }
+            }
+
+            minesConfig.set("mines." + name + ".world", world.getName());
+            minesConfig.set("mines." + name + ".pos1", serializeLocation(pos1));
+            minesConfig.set("mines." + name + ".pos2", serializeLocation(pos2));
+
+            List<String> blockTypes;
+            List<Material> fillerMaterials;
+            switch (name) {
+                case "ore":
+                    blockTypes = Arrays.asList("COAL_ORE", "IRON_ORE", "COPPER_ORE", "GOLD_ORE", "REDSTONE_ORE", "LAPIS_ORE", "DIAMOND_ORE", "EMERALD_ORE");
+                    fillerMaterials = Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
+                    break;
+                case "wood":
+                    blockTypes = Arrays.asList("OAK_LOG", "BIRCH_LOG", "SPRUCE_LOG", "JUNGLE_LOG", "ACACIA_LOG", "DARK_OAK_LOG", "MANGROVE_LOG", "CHERRY_LOG", "BAMBOO_BLOCK", "PALE_OAK_LOG");
+                    fillerMaterials =  Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
+                    break;
+                case "nether":
+                    blockTypes = Arrays.asList("NETHERRACK", "NETHER_QUARTZ_ORE", "ANCIENT_DEBRIS", "MAGMA_BLOCK", "SOUL_SAND", "SOUL_SOIL", "BASALT", "BLACKSTONE");
+                    fillerMaterials = Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                    break;
+                default:
+                    blockTypes = Collections.singletonList("STONE");
+                    fillerMaterials = Collections.singletonList(Material.STONE);
+            }
+
+            minesConfig.set("mines." + name + ".blocks", blockTypes);
+            try {
+                minesConfig.save(minesFile);
+            } catch (IOException e) {
+                e.printStackTrace();
+                player.sendMessage(ChatColor.RED + "Failed to save mine config file.");
+                return true;
+            }
+
+            int wallMinX = minX + 1;
+            int wallMaxX = maxX - 1;
+            int wallMinZ = minZ + 1;
+            int wallMaxZ = maxZ - 1;
+
+            Material wallMaterial = Material.STONE_BRICKS;
+            for (int y = baseY; y <= topY; y++) {
+                for (int x = wallMinX; x <= wallMaxX; x++) {
+                    world.getBlockAt(x, y, wallMinZ).setType(wallMaterial);
+                    world.getBlockAt(x, y, wallMaxZ).setType(wallMaterial);
+                }
+                for (int z = wallMinZ; z <= wallMaxZ; z++) {
+                    world.getBlockAt(wallMinX, y, z).setType(wallMaterial);
+                    world.getBlockAt(wallMaxX, y, z).setType(wallMaterial);
+                }
+            }
+
+            int midX = (minX + maxX) / 2;
+            int midZ = (minZ + maxZ) / 2;
+
+            for (int y = baseY + 1; y < topY; y++) {
+                placeLadder(world, midX, y, wallMinZ + 1, BlockFace.SOUTH);
+                placeLadder(world, midX, y, wallMaxZ - 1, BlockFace.NORTH);
+                placeLadder(world, wallMinX + 1, y, midZ, BlockFace.EAST);
+                placeLadder(world, wallMaxX - 1, y, midZ, BlockFace.WEST);
+            }
+
+            Random rand = new Random();
+            for (int x = wallMinX + 1; x < wallMaxX; x++) {
+                for (int z = wallMinZ + 1; z < wallMaxZ; z++) {
+                    for (int y = baseY + 1; y < topY; y++) {
+                        Material mat = rand.nextDouble() < 0.20
+                                ? Material.valueOf(blockTypes.get(rand.nextInt(blockTypes.size())))
+                                : fillerMaterials.get(rand.nextInt(fillerMaterials.size()));
+                        world.getBlockAt(x, y, z).setType(mat);
+                    }
+                }
+            }
+
+            player.sendMessage(ChatColor.GREEN + "Mine '" + name + "' has been created!");
+            return true;
+        }
+
+
+
+        if (command.getName().equalsIgnoreCase("islandinfo")) {
+
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't have an island yet!");
+                return true;
+            }
+
+
+            int size = islandSizes.getOrDefault(playerId, 32);
+            int level = islandGeneratorLevels.getOrDefault(playerId, 0);
+            Set<UUID> trusted = trustedPlayers.getOrDefault(playerId, new HashSet<>());
+
+            player.sendMessage(ChatColor.GOLD + "------ Island Info ------");
+            player.sendMessage(ChatColor.YELLOW + "Size: " + ChatColor.WHITE + size + "x" + size);
+            player.sendMessage(ChatColor.YELLOW + "Generator Level: " + ChatColor.WHITE + level);
+            player.sendMessage(ChatColor.YELLOW + "Trusted: " + ChatColor.WHITE + (trusted.isEmpty() ? "None" : trusted.size() + " players"));
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("wand")) {
+            ItemStack wand = new ItemStack(Material.BLAZE_ROD);
+            ItemMeta meta = wand.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(ChatColor.GOLD + "Mine Wand");
+                wand.setItemMeta(meta);
+            }
+            player.getInventory().addItem(wand);
+            player.sendMessage(ChatColor.GREEN + "Mine Wand added to your inventory!");
             return true;
         }
         if (command.getName().equalsIgnoreCase("deleteisland")) {
@@ -600,6 +881,20 @@ if (command.getName().equalsIgnoreCase("createisland")) {
         }
         return false;
     }
+    private Map<String, Object> serializeLocation(Location loc) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("x", loc.getBlockX());
+        map.put("y", loc.getBlockY());
+        map.put("z", loc.getBlockZ());
+        return map;
+    }
+    private void placeLadder(World world, int x, int y, int z, BlockFace facing) {
+        Block block = world.getBlockAt(x, y, z);
+        block.setType(Material.LADDER);
+        Ladder ladder = (Ladder) Bukkit.createBlockData(Material.LADDER);
+        ladder.setFacing(facing);
+        block.setBlockData(ladder);
+    }
     private void setBiome(Location center, int size, Biome biome) {
         int half = size / 2;
         World world = center.getWorld();
@@ -818,7 +1113,7 @@ if (command.getName().equalsIgnoreCase("createisland")) {
 
         // Save owner as the playerId itself (they own their own island)
         getConfig().set("islands." + playerId + ".owner", playerId.toString());
-
+        getConfig().set("islands." + playerId + ".generator", islandGeneratorLevels.getOrDefault(playerId, 0));
         saveConfig();
     }
     // FIXED loadIslandData
@@ -882,6 +1177,8 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             List<String> trustedList = config.getStringList("islands." + playerId + ".trusted");
             Set<UUID> trustedSet = trustedList.stream().map(UUID::fromString).collect(Collectors.toSet());
             trustedPlayers.put(playerId, trustedSet);
+            int generatorLevel = config.getInt("islands." + playerId + ".generator", 0);
+            islandGeneratorLevels.put(playerId, generatorLevel);
 
             // Ownership (player owns their own island)
             islandOwnershipMap.put(center, playerId);
@@ -911,6 +1208,11 @@ if (command.getName().equalsIgnoreCase("createisland")) {
     private boolean hasIslandAccess(Player player, Location location) {
         UUID playerId = player.getUniqueId();
 
+        // Restrict access logic to only the island world
+        if (!"universe_world".equals(location.getWorld().getName())) {
+            return true; // Allow everything outside the island world
+        }
+
         // Only allow bypass if the player has toggled /ignoreclaims
         if (ignoreClaims.contains(playerId) && player.hasPermission("universe.ignoreclaims")) return true;
 
@@ -920,6 +1222,7 @@ if (command.getName().equalsIgnoreCase("createisland")) {
         return ownerId.equals(playerId) ||
                 trustedPlayers.getOrDefault(ownerId, Collections.emptySet()).contains(playerId);
     }
+
     private boolean isWithinIsland(Location location, UUID islandOwnerId) {
         Location center = islandCenters.get(islandOwnerId);
         if (center == null) {
@@ -1081,15 +1384,76 @@ if (command.getName().equalsIgnoreCase("createisland")) {
         }
         return null;
     }
-    private boolean canModifyIsland(UUID islandOwnerId, Player player) {
-        return islandOwnerId.equals(player.getUniqueId()) ||
-                trustedPlayers.getOrDefault(islandOwnerId, Collections.emptySet()).contains(player.getUniqueId()) ||
-                player.hasPermission("island.modify");
+    public Location deserializeLocation(ConfigurationSection section, String worldName) {
+        if (section == null || worldName == null) return null;
+
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) return null;
+
+        int x = section.getInt("x");
+        int y = section.getInt("y");
+        int z = section.getInt("z");
+
+        return new Location(world, x, y, z);
     }
 
-    private void denyAction(Player player, Cancellable event) {
-        player.sendMessage(ChatColor.RED + "You cannot modify another player's island.");
-        event.setCancelled(true);
-    }
 
+
+    public void scheduleMineResets() {
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            File minesFile = new File(getDataFolder(), "mines.yml");
+            FileConfiguration config = YamlConfiguration.loadConfiguration(minesFile);
+            if (!config.contains("mines")) return;
+
+            for (String name : config.getConfigurationSection("mines").getKeys(false)) {
+                String worldName = minesConfig.getString("mines." + name + ".world");
+
+                ConfigurationSection pos1Section = minesConfig.getConfigurationSection("mines." + name + ".pos1");
+                ConfigurationSection pos2Section = minesConfig.getConfigurationSection("mines." + name + ".pos2");
+
+                Location pos1 = deserializeLocation(pos1Section, worldName);
+                Location pos2 = deserializeLocation(pos2Section, worldName);
+
+                List<String> blockNames = config.getStringList("mines." + name + ".blocks");
+                List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).collect(Collectors.toList());
+
+                List<Material> fillerBlocks;
+                switch (name) {
+                    case "ore":
+                        fillerBlocks = Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
+                        break;
+                    case "wood":
+                        fillerBlocks = Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
+                        break;
+                    case "nether":
+                        fillerBlocks = Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                        break;
+                    default:
+                        fillerBlocks = Collections.singletonList(Material.STONE);
+                }
+
+                World world = Bukkit.getWorld(worldName);
+                if (world == null || pos1 == null || pos2 == null) continue;
+
+                int minX = Math.min(pos1.getBlockX(), pos2.getBlockX()) + 2;
+                int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX()) - 2;
+                int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ()) + 2;
+                int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ()) - 2;
+                int baseY = Math.min(pos1.getBlockY(), pos2.getBlockY()) + 1;
+                int topY = baseY + 58;
+
+                Random rand = new Random();
+                for (int x = minX; x < maxX; x++) {
+                    for (int z = minZ; z < maxZ; z++) {
+                        for (int y = baseY; y < topY; y++) {
+                            Material mat = rand.nextDouble() < 0.20
+                                    ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
+                                    : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
+                            world.getBlockAt(x, y, z).setType(mat);
+                        }
+                    }
+                }
+            }
+        }, 0L, 20L * 60 * 30); // Every 30 minutes
+    }
 }

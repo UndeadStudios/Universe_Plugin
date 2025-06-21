@@ -15,3 +15,4 @@ islands:
     minZ: -50
     maxZ: 50
     trusted: []  # List of UUIDs trusted to modify the island (empty by default)
+    generator: 0

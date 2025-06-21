@@ -61,10 +61,31 @@ commands:
     description: Toggle ignoring island protection
     usage: /ignoreclaims
     permission: universe.ignoreclaims
+  islandinfo:
+    description: View your island's size, generator level, and trusted players
+    usage: /islandinfo
+  wand:
+    description: Gives you the Mine Wand for selecting regions
+    usage: /wand
+    permission: universe.wand
+    permission-message: You do not have permission.
+  createmine:
+    description: Create a new mine using your wand selection
+    usage: /createmine <name>
+    permission: universe.createmine
+    permission-message: You do not have permission to create mines.
+  resetmine:
+    description: Resets a defined mine's interior.
+    usage: /resetmine <ore|wood|nether>
+    permission: universe.resetmine
+    permission-message: You do not have permission to reset mines.
 permissions:
   universe.island.modify:
     description: Allows players to bypass island protections and modify any island.
     default: op
+  universe.createmine:
+    default: op
+    description: Allows staff to create mines using wand selection
 
   universe.island.bypass:
     description: Allows players to bypass all island restrictions (admin override).
@@ -77,6 +98,10 @@ permissions:
   universe.expandisland:
     description: Allows players to expand the size of their island.
     default: true
+
+  universe.wand:
+    default: op
+    description: Allows staff to get and use the mine selection wand
 
   universe.home:
     description: Allows players to teleport to their island home.
@@ -107,4 +132,7 @@ permissions:
     default: true
   universe.ignoreclaims:
     description: Allows bypassing island protections
+    default: op
+  universe.resetmine:
+    description: Allows resetting mines.
     default: op
