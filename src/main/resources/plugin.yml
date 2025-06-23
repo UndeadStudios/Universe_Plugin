@@ -4,6 +4,9 @@ main: com.dragonsmith.universe.Universe
 api-version: '1.21'  # Confirm the correct API version for your server
 
 commands:
+  help:
+    description: Shows all Universe plugin commands.
+    usage: /help
   createisland:
     description: Creates a new island at a random location for the player.
     usage: /createisland
@@ -53,10 +56,15 @@ commands:
     permission-message: You don't have permission to untrust other players on your island!
 
   visit:
-    description: Allows you to visit other people's islands.
+    description: Visit another player's island.
     usage: /visit <player>
-    permission: universe.visit
-    permission-message: You don't have permission to visit other people's islands!
+
+  setvisitspawn:
+    description: Set where visitors land on your island.
+    usage: /setvisitspawn
+  islandlock:
+    description: Lock or unlock your island for visitors.
+    usage: /islandlock [on|off]
   ignoreclaims:
     description: Toggle ignoring island protection
     usage: /ignoreclaims

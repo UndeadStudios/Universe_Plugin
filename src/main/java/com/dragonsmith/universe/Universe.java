@@ -41,7 +41,8 @@ public class Universe extends JavaPlugin implements Listener {
     private final Random random = new Random();
     private final Map<UUID, Location[]> mineSelections = new HashMap<>();
     private final Map<String, Location[]> definedMines = new HashMap<>();
-
+    Map<UUID, Location> visitSpawns = new HashMap<>();
+    Map<UUID, Boolean> islandLocks = new HashMap<>();
 
     // Initialize the islandBiomes map if not already initialized
     // Map to store island ownership: Location -> Owner UUID
@@ -227,6 +228,9 @@ public class Universe extends JavaPlugin implements Listener {
         getCommand("createmine").setExecutor(this);
         getCommand("resetmine").setExecutor(this);
         getCommand("setminespawn").setExecutor(this);
+        getCommand("setvisitspawn").setExecutor(this);
+        getCommand("islandlock").setExecutor(this);
+        getCommand("help").setExecutor(this);
         getLogger().info("Universe plugin has been enabled!");
     }
 
@@ -995,24 +999,84 @@ private void giveUniverseMenuItem(Player player) {
                 return true;
             }
 
-            Player targetPlayer = Bukkit.getPlayer(args[0]);
-            if (targetPlayer == null) {
+            Player target = Bukkit.getPlayer(args[0]);
+            if (target == null) {
                 player.sendMessage(ChatColor.RED + "Player not found or not online.");
                 return true;
             }
 
-            UUID targetPlayerId = targetPlayer.getUniqueId();
+            UUID targetId = target.getUniqueId();
 
-            if (!islandCenters.containsKey(targetPlayerId)) {
-                player.sendMessage(ChatColor.RED + "This player does not have an island.");
+            if (!islandCenters.containsKey(targetId)) {
+                player.sendMessage(ChatColor.RED + "That player does not have an island.");
                 return true;
             }
 
-            Location targetIsland = islandCenters.get(targetPlayerId);
-            player.teleport(targetIsland.clone().add(0, 57, 0)); // Teleport just above the ground level
-            player.sendMessage(ChatColor.GREEN + "Teleported to " + targetPlayer.getName() + "'s island!");
+            if (islandLocks.getOrDefault(targetId, false)) {
+                player.sendMessage(ChatColor.RED + "This island is locked and cannot be visited.");
+                return true;
+            }
+
+            Location visitLoc = visitSpawns.getOrDefault(targetId,
+                    islandCenters.get(targetId).clone().add(0, 57, 0)); // Fallback center
+
+            player.teleport(visitLoc);
+            player.sendMessage(ChatColor.GREEN + "You are now visiting " + target.getName() + "'s island!");
             return true;
         }
+        if (command.getName().equalsIgnoreCase("setvisitspawn")) {
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't own an island.");
+                return true;
+            }
+
+            Location loc = player.getLocation();
+            visitSpawns.put(playerId, loc);
+            player.sendMessage(ChatColor.GREEN + "Visit spawn location set!");
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("islandlock")) {
+            if (!islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You don't own an island.");
+                return true;
+            }
+
+            if (args.length == 0) {
+                boolean locked = islandLocks.getOrDefault(playerId, false);
+                player.sendMessage(ChatColor.YELLOW + "Your island is currently " + (locked ? "locked" : "unlocked") + ".");
+                return true;
+            }
+
+            if (args[0].equalsIgnoreCase("on")) {
+                islandLocks.put(playerId, true);
+                player.sendMessage(ChatColor.RED + "Your island is now locked. Players cannot visit.");
+            } else if (args[0].equalsIgnoreCase("off")) {
+                islandLocks.put(playerId, false);
+                player.sendMessage(ChatColor.GREEN + "Your island is now unlocked. Players can visit.");
+            } else {
+                player.sendMessage(ChatColor.RED + "Usage: /islandlock [on|off]");
+            }
+
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("help")) {
+            player.sendMessage(ChatColor.GOLD + "----[ Universe Help Commands ]----");
+            player.sendMessage(ChatColor.YELLOW + "/createisland" + ChatColor.GRAY + " - Create your personal island.");
+            player.sendMessage(ChatColor.YELLOW + "/expandisland" + ChatColor.GRAY + " - Expand your island's borders.");
+            player.sendMessage(ChatColor.YELLOW + "/balance" + ChatColor.GRAY + " - Check your island balance.");
+            player.sendMessage(ChatColor.YELLOW + "/setbiome" + ChatColor.GRAY + " - Change your island's biome.");
+            player.sendMessage(ChatColor.YELLOW + "/ignoreclaims" + ChatColor.GRAY + " - Toggle claim protection bypass.");
+            player.sendMessage(ChatColor.YELLOW + "/islandinfo" + ChatColor.GRAY + " - View detailed island info.");
+            player.sendMessage(ChatColor.YELLOW + "/wand" + ChatColor.GRAY + " - Get the admin wand for region setup.");
+            player.sendMessage(ChatColor.YELLOW + "/createmine" + ChatColor.GRAY + " - Define a new mine region.");
+            player.sendMessage(ChatColor.YELLOW + "/resetmine" + ChatColor.GRAY + " - Reset a mine and teleport players.");
+            player.sendMessage(ChatColor.YELLOW + "/setminespawn" + ChatColor.GRAY + " - Set the mine's reset respawn.");
+            player.sendMessage(ChatColor.YELLOW + "/setvisitspawn" + ChatColor.GRAY + " - Set where visitors land on your island.");
+            player.sendMessage(ChatColor.YELLOW + "/islandlock [on/off]" + ChatColor.GRAY + " - Lock/unlock your island.");
+            player.sendMessage(ChatColor.YELLOW + "/visit <player>" + ChatColor.GRAY + " - Visit another player's island.");
+            return true;
+        }
+
         return false;
     }
     private Map<String, Object> serializeLocation(Location loc) {
