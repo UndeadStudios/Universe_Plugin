@@ -455,10 +455,8 @@ private void giveUniverseMenuItem(Player player) {
             }
 
             String worldName = minesConfig.getString("mines." + mineName + ".world");
-
             ConfigurationSection pos1Section = minesConfig.getConfigurationSection("mines." + mineName + ".pos1");
             ConfigurationSection pos2Section = minesConfig.getConfigurationSection("mines." + mineName + ".pos2");
-
             Location pos1 = deserializeLocation(pos1Section, worldName);
             Location pos2 = deserializeLocation(pos2Section, worldName);
 
@@ -485,7 +483,6 @@ private void giveUniverseMenuItem(Player player) {
                 return true;
             }
 
-            // Calculate boundaries
             int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
             int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
             int minY = Math.min(pos1.getBlockY(), pos2.getBlockY());
@@ -493,7 +490,6 @@ private void giveUniverseMenuItem(Player player) {
             int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
             int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
 
-            // 🚨 Teleport players out of the mine area before reset
             int teleportX = (minX + maxX) / 2;
             int teleportZ = (minZ + maxZ) / 2;
             int teleportY = maxY - 1;
@@ -510,8 +506,6 @@ private void giveUniverseMenuItem(Player player) {
 
                     ConfigurationSection spawnSection = minesConfig.getConfigurationSection("mines." + mineName + ".spawn");
                     Location teleportLoc = deserializeLocation(spawnSection, worldName);
-
-// Fallback to top of the mine if spawn isn't set
                     if (teleportLoc == null) {
                         teleportLoc = new Location(world, teleportX + 0.5, teleportY, teleportZ + 0.5);
                         online.sendMessage(ChatColor.RED + "Mine spawn not set. You were moved to the top center.");
@@ -522,8 +516,7 @@ private void giveUniverseMenuItem(Player player) {
                 }
             }
 
-
-            // Reset blocks
+            // Async-style block reset
             int fillMinX = minX + 2;
             int fillMaxX = maxX - 2;
             int fillMinZ = minZ + 2;
@@ -531,21 +524,45 @@ private void giveUniverseMenuItem(Player player) {
             int baseY = minY + 1;
             int topY = baseY + 58;
 
-            Random rand = new Random();
+            List<Block> blocksToSet = new ArrayList<>();
             for (int x = fillMinX; x < fillMaxX; x++) {
                 for (int z = fillMinZ; z < fillMaxZ; z++) {
                     for (int y = baseY; y < topY; y++) {
-                        Material mat = rand.nextDouble() < 0.20
-                                ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
-                                : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
-                        world.getBlockAt(x, y, z).setType(mat);
+                        blocksToSet.add(world.getBlockAt(x, y, z));
                     }
                 }
             }
 
-            player.sendMessage(ChatColor.GREEN + "Mine '" + mineName + "' has been reset!");
+            Collections.shuffle(blocksToSet); // Optional spreading
+
+            Player finalPlayer1 = player;
+            new BukkitRunnable() {
+                final Iterator<Block> iterator = blocksToSet.iterator();
+                final Random rand = new Random();
+                final int BLOCKS_PER_TICK = 1000;
+
+                @Override
+                public void run() {
+                    int count = 0;
+                    while (iterator.hasNext() && count < BLOCKS_PER_TICK) {
+                        Block block = iterator.next();
+                        Material mat = rand.nextDouble() < 0.20
+                                ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
+                                : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
+                        block.setType(mat, false);
+                        count++;
+                    }
+
+                    if (!iterator.hasNext()) {
+                        cancel();
+                        finalPlayer1.sendMessage(ChatColor.GREEN + "Mine '" + mineName + "' has been reset!");
+                    }
+                }
+            }.runTaskTimer(this, 0L, 1L);
+
             return true;
         }
+
         if (command.getName().equalsIgnoreCase("setminespawn")) {
             if (!player.hasPermission("universe.setminespawn")) {
                 player.sendMessage(ChatColor.RED + "You lack permission to set mine spawns.");
@@ -1611,7 +1628,6 @@ private void giveUniverseMenuItem(Player player) {
 
                 Location pos1 = deserializeLocation(pos1Section, worldName);
                 Location pos2 = deserializeLocation(pos2Section, worldName);
-
                 if (pos1 == null || pos2 == null) continue;
 
                 World world = Bukkit.getWorld(worldName);
@@ -1624,16 +1640,13 @@ private void giveUniverseMenuItem(Player player) {
                 int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
                 int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
 
-                // 📦 Teleport players to top center before reset
                 int teleportX = (minX + maxX) / 2;
                 int teleportZ = (minZ + maxZ) / 2;
-                int teleportY = maxY - 1; // Some buffer above the mine
+                int teleportY = maxY - 1;
 
-                ConfigurationSection spawnSection = minesConfig.getConfigurationSection("mines." + name + ".spawn");
+                ConfigurationSection spawnSection = config.getConfigurationSection("mines." + name + ".spawn");
                 Location spawnLoc = deserializeLocation(spawnSection, worldName);
-
                 if (spawnLoc == null) {
-                    // Default to calculated top-center
                     spawnLoc = new Location(world, teleportX + 0.5, teleportY, teleportZ + 0.5);
                 }
 
@@ -1646,39 +1659,26 @@ private void giveUniverseMenuItem(Player player) {
                     if (bx >= minX && bx <= maxX &&
                             by >= minY && by <= maxY &&
                             bz >= minZ && bz <= maxZ) {
-
                         player.teleport(spawnLoc);
                         player.sendMessage(ChatColor.YELLOW + "You've been moved while the mine resets.");
                     }
                 }
 
-
-                // Continue to handle block filling
                 List<String> blockNames = config.getStringList("mines." + name + ".blocks");
-                List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).collect(Collectors.toList());
+                List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).toList();
 
-                List<Material> fillerBlocks;
-                switch (name) {
-                    case "ore":
-                        fillerBlocks = Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
-                        break;
-                    case "wood":
-                        fillerBlocks = Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
-                        break;
-                    case "nether":
-                        fillerBlocks = Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
-                        break;
-                    case "crystal":
-                        fillerBlocks = Arrays.asList(Material.GLASS, Material.WHITE_STAINED_GLASS, Material.ORANGE_STAINED_GLASS,
-                                Material.MAGENTA_STAINED_GLASS, Material.LIGHT_BLUE_STAINED_GLASS, Material.YELLOW_STAINED_GLASS,
-                                Material.LIME_STAINED_GLASS, Material.PINK_STAINED_GLASS, Material.GRAY_STAINED_GLASS,
-                                Material.LIGHT_GRAY_STAINED_GLASS, Material.CYAN_STAINED_GLASS, Material.PURPLE_STAINED_GLASS,
-                                Material.BLUE_STAINED_GLASS, Material.BROWN_STAINED_GLASS, Material.GREEN_STAINED_GLASS,
-                                Material.RED_STAINED_GLASS, Material.BLACK_STAINED_GLASS, Material.TINTED_GLASS);
-                        break;
-                    default:
-                        fillerBlocks = Collections.singletonList(Material.STONE);
-                }
+                List<Material> fillerBlocks = switch (name) {
+                    case "ore" -> Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
+                    case "wood" -> Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
+                    case "nether" -> Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                    case "crystal" -> Arrays.asList(Material.GLASS, Material.WHITE_STAINED_GLASS, Material.ORANGE_STAINED_GLASS,
+                            Material.MAGENTA_STAINED_GLASS, Material.LIGHT_BLUE_STAINED_GLASS, Material.YELLOW_STAINED_GLASS,
+                            Material.LIME_STAINED_GLASS, Material.PINK_STAINED_GLASS, Material.GRAY_STAINED_GLASS,
+                            Material.LIGHT_GRAY_STAINED_GLASS, Material.CYAN_STAINED_GLASS, Material.PURPLE_STAINED_GLASS,
+                            Material.BLUE_STAINED_GLASS, Material.BROWN_STAINED_GLASS, Material.GREEN_STAINED_GLASS,
+                            Material.RED_STAINED_GLASS, Material.BLACK_STAINED_GLASS, Material.TINTED_GLASS);
+                    default -> Collections.singletonList(Material.STONE);
+                };
 
                 int fillMinX = minX + 2;
                 int fillMaxX = maxX - 2;
@@ -1687,17 +1687,37 @@ private void giveUniverseMenuItem(Player player) {
                 int fillMinY = minY + 1;
                 int fillTopY = fillMinY + 58;
 
-                Random rand = new Random();
+                List<Block> blocksToSet = new ArrayList<>();
                 for (int x = fillMinX; x < fillMaxX; x++) {
                     for (int z = fillMinZ; z < fillMaxZ; z++) {
                         for (int y = fillMinY; y < fillTopY; y++) {
-                            Material mat = rand.nextDouble() < 0.20
-                                    ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
-                                    : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
-                            world.getBlockAt(x, y, z).setType(mat);
+                            blocksToSet.add(world.getBlockAt(x, y, z));
                         }
                     }
                 }
+
+                Collections.shuffle(blocksToSet); // Optional: spreads load better
+
+                new BukkitRunnable() {
+                    final Iterator<Block> iterator = blocksToSet.iterator();
+                    final Random rand = new Random();
+                    final int BLOCKS_PER_TICK = 1000;
+
+                    @Override
+                    public void run() {
+                        int count = 0;
+                        while (iterator.hasNext() && count < BLOCKS_PER_TICK) {
+                            Block block = iterator.next();
+                            Material mat = rand.nextDouble() < 0.20
+                                    ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
+                                    : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
+                            block.setType(mat, false);
+                            count++;
+                        }
+
+                        if (!iterator.hasNext()) cancel();
+                    }
+                }.runTaskTimer(this, 0L, 1L); // Smooth reset over multiple ticks
             }
         }, 0L, 20L * 60 * 30); // Every 30 minutes
     }
