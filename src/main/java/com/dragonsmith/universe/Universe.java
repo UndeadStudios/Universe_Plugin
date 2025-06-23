@@ -17,6 +17,7 @@ import org.bukkit.event.block.*;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -76,7 +77,6 @@ public class Universe extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
-        giveUniverseMenuToOnlinePlayers();
 
         scheduleMineResets();
         getServer().getPluginManager().registerEvents(this, this);
@@ -226,6 +226,7 @@ public class Universe extends JavaPlugin implements Listener {
         getCommand("wand").setExecutor(this);
         getCommand("createmine").setExecutor(this);
         getCommand("resetmine").setExecutor(this);
+        getCommand("setminespawn").setExecutor(this);
         getLogger().info("Universe plugin has been enabled!");
     }
 
@@ -261,12 +262,14 @@ public void onDisable() {
     }
 
 
-    private void giveUniverseMenuToOnlinePlayers() {
-        getServer().getScheduler().runTaskLater(this, () -> {
-            for (Player player : getServer().getOnlinePlayers()) {
-                giveUniverseMenuItem(player);
-            }
-        }, 20L);
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+
+        // Optional: Delay slightly to avoid inventory timing bugs
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            giveUniverseMenuItem(player);
+        }, 10L);
     }
 
     private void openDeleteConfirmMenu(Player player) {
@@ -331,46 +334,90 @@ private void giveUniverseMenuItem(Player player) {
         UUID playerId = player.getUniqueId();
 
         // Handle the "/createisland" command
-if (command.getName().equalsIgnoreCase("createisland")) {
-    if (islandCenters.containsKey(playerId)) {
-        player.sendMessage(ChatColor.RED + "You already have an island!");
-        return true;
-    }
+        if (command.getName().equalsIgnoreCase("createisland")) {
+            if (islandCenters.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "You already have an island!");
+                return true;
+            }
 
-    World world = Bukkit.getWorld("universe_world");
-    if (world == null) {
-        player.sendMessage(ChatColor.RED + "The world is not available!");
-        return true;
-    }
+            World world = Bukkit.getWorld("universe_world");
+            if (world == null) {
+                player.sendMessage(ChatColor.RED + "The world is not available!");
+                return true;
+            }
 
-    // Calculate the island location
-    Location center = new Location(world, nextIslandX, spawnHeight, nextIslandZ);
-    nextIslandX += islandSpacing;
-    if (nextIslandX > 6000) { // Wrap around after 10 islands horizontally
-        nextIslandX = 0;
-        nextIslandZ += islandSpacing;
-    }
+            int attempts = 0;
+            Location center = null;
 
-    // Assign the island to the player
-    assignIslandToPlayer(center, playerId);
+            outerSearchLoop:
+            while (attempts < 10000) {
+                center = new Location(world, nextIslandX, spawnHeight, nextIslandZ);
+                // ❌ Skip origin or near-origin locations (64-block buffer around 0,0)
+                if (Math.abs(center.getBlockX()) <= 64 && Math.abs(center.getBlockZ()) <= 64) {
+                    nextIslandX += islandSpacing;
+                    if (nextIslandX > 6000) {
+                        nextIslandX = 0;
+                        nextIslandZ += islandSpacing;
+                    }
+                    attempts++;
+                    continue;
+                }
+                int halfSize = defaultIslandSize / 2;
+                int minX = center.getBlockX() - halfSize;
+                int maxX = center.getBlockX() + halfSize;
+                int minZ = center.getBlockZ() - halfSize;
+                int maxZ = center.getBlockZ() + halfSize;
 
-    // Assign ownership
-    islandCenters.put(playerId, center); // Link player ID to their island
-    islandSizes.put(playerId, defaultIslandSize);
-    islandGeneratorLevels.put(playerId, 1);
-    islandBiomes.put(playerId, Biome.PLAINS);
+                for (UUID otherId : islandCenters.keySet()) {
+                    if (otherId.equals(playerId)) continue; // ✅ Skip own island if rechecking
 
-    // Generate the island
-    generateIsland(center, defaultIslandSize, playerId);
-    world.getChunkAt(center).load(); // Load the chunk
-    player.teleport(center.clone().add(0, 57, 0));
-    giveStarterChest(center);
+                    Location other = islandCenters.get(otherId);
+                    int otherHalf = islandSizes.getOrDefault(otherId, defaultIslandSize) / 2;
+                    int oX = other.getBlockX();
+                    int oZ = other.getBlockZ();
 
-    // Notify the player
-    player.sendMessage(ChatColor.GREEN + "Island created successfully!");
-    player.sendMessage(ChatColor.GOLD + "You are now the owner of this island.");
-    return true;
-}
+                    int oMinX = oX - otherHalf;
+                    int oMaxX = oX + otherHalf;
+                    int oMinZ = oZ - otherHalf;
+                    int oMaxZ = oZ + otherHalf;
+
+                    // AABB overlap check
+                    if (minX <= oMaxX && maxX >= oMinX &&
+                            minZ <= oMaxZ && maxZ >= oMinZ) {
+                        nextIslandX += islandSpacing;
+                        if (nextIslandX > 6000) {
+                            nextIslandX = 0;
+                            nextIslandZ += islandSpacing;
+                        }
+                        attempts++;
+                        continue outerSearchLoop;
+                    }
+                }
+
+                break; // No overlap, good spot
+            }
+
+
+            if (attempts >= 10000 || center == null) {
+                player.sendMessage(ChatColor.RED + "Failed to find a safe island location.");
+                return true;
+            }
+
+            assignIslandToPlayer(center, playerId);
+            islandCenters.put(playerId, center);
+            islandSizes.put(playerId, defaultIslandSize);
+            islandGeneratorLevels.put(playerId, 1);
+            islandBiomes.put(playerId, Biome.PLAINS);
+
+            generateIsland(center, defaultIslandSize, playerId);
+            world.getChunkAt(center).load();
+            player.teleport(center.clone().add(0, 57, 0));
+            giveStarterChest(center);
+
+            player.sendMessage(ChatColor.GREEN + "Island created successfully!");
+            return true;
+        }
+
         if (command.getName().equalsIgnoreCase("ignoreclaims")) {
             if (!player.hasPermission("universe.ignoreclaims")) {
                 player.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
@@ -393,7 +440,7 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             }
 
             if (args.length != 1) {
-                player.sendMessage(ChatColor.RED + "Usage: /resetmine <ore|wood|nether>");
+                player.sendMessage(ChatColor.RED + "Usage: /resetmine <ore|wood|nether|crystal>");
                 return true;
             }
 
@@ -411,17 +458,19 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             Location pos1 = deserializeLocation(pos1Section, worldName);
             Location pos2 = deserializeLocation(pos2Section, worldName);
 
-
             List<String> blockNames = minesConfig.getStringList("mines." + mineName + ".blocks");
             List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).toList();
 
             List<Material> fillerBlocks = switch (mineName) {
-                case "ore" ->
-                        Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
-                case "wood" ->
-                        Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
-                case "nether" ->
-                        Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                case "ore" -> Arrays.asList(Material.STONE, Material.GRANITE, Material.DIORITE, Material.ANDESITE, Material.CALCITE, Material.TUFF);
+                case "wood" -> Arrays.asList(Material.DIRT, Material.MOSS_BLOCK, Material.MOSSY_COBBLESTONE, Material.PALE_MOSS_BLOCK);
+                case "nether" -> Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                case "crystal" -> Arrays.asList(Material.GLASS, Material.WHITE_STAINED_GLASS, Material.ORANGE_STAINED_GLASS,
+                        Material.MAGENTA_STAINED_GLASS, Material.LIGHT_BLUE_STAINED_GLASS, Material.YELLOW_STAINED_GLASS,
+                        Material.LIME_STAINED_GLASS, Material.PINK_STAINED_GLASS, Material.GRAY_STAINED_GLASS,
+                        Material.LIGHT_GRAY_STAINED_GLASS, Material.CYAN_STAINED_GLASS, Material.PURPLE_STAINED_GLASS,
+                        Material.BLUE_STAINED_GLASS, Material.BROWN_STAINED_GLASS, Material.GREEN_STAINED_GLASS,
+                        Material.RED_STAINED_GLASS, Material.BLACK_STAINED_GLASS, Material.TINTED_GLASS);
                 default -> Collections.singletonList(Material.STONE);
             };
 
@@ -432,16 +481,55 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                 return true;
             }
 
-            int minX = Math.min(pos1.getBlockX(), pos2.getBlockX()) + 2;
-            int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX()) - 2;
-            int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ()) + 2;
-            int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ()) - 2;
-            int baseY = Math.min(pos1.getBlockY(), pos2.getBlockY()) + 1;
+            // Calculate boundaries
+            int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
+            int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
+            int minY = Math.min(pos1.getBlockY(), pos2.getBlockY());
+            int maxY = Math.max(pos1.getBlockY(), pos2.getBlockY());
+            int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
+            int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
+
+            // 🚨 Teleport players out of the mine area before reset
+            int teleportX = (minX + maxX) / 2;
+            int teleportZ = (minZ + maxZ) / 2;
+            int teleportY = maxY - 1;
+
+            for (Player online : world.getPlayers()) {
+                Location loc = online.getLocation();
+                int blockX = loc.getBlockX();
+                int blockY = loc.getBlockY();
+                int blockZ = loc.getBlockZ();
+
+                if (blockX >= minX && blockX <= maxX &&
+                        blockY >= minY && blockY <= maxY &&
+                        blockZ >= minZ && blockZ <= maxZ) {
+
+                    ConfigurationSection spawnSection = minesConfig.getConfigurationSection("mines." + mineName + ".spawn");
+                    Location teleportLoc = deserializeLocation(spawnSection, worldName);
+
+// Fallback to top of the mine if spawn isn't set
+                    if (teleportLoc == null) {
+                        teleportLoc = new Location(world, teleportX + 0.5, teleportY, teleportZ + 0.5);
+                        online.sendMessage(ChatColor.RED + "Mine spawn not set. You were moved to the top center.");
+                    }
+
+                    online.teleport(teleportLoc);
+                    online.sendMessage(ChatColor.YELLOW + "You've been moved while the mine resets.");
+                }
+            }
+
+
+            // Reset blocks
+            int fillMinX = minX + 2;
+            int fillMaxX = maxX - 2;
+            int fillMinZ = minZ + 2;
+            int fillMaxZ = maxZ - 2;
+            int baseY = minY + 1;
             int topY = baseY + 58;
 
             Random rand = new Random();
-            for (int x = minX; x < maxX; x++) {
-                for (int z = minZ; z < maxZ; z++) {
+            for (int x = fillMinX; x < fillMaxX; x++) {
+                for (int z = fillMinZ; z < fillMaxZ; z++) {
                     for (int y = baseY; y < topY; y++) {
                         Material mat = rand.nextDouble() < 0.20
                                 ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
@@ -454,6 +542,48 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             player.sendMessage(ChatColor.GREEN + "Mine '" + mineName + "' has been reset!");
             return true;
         }
+        if (command.getName().equalsIgnoreCase("setminespawn")) {
+            if (!player.hasPermission("universe.setminespawn")) {
+                player.sendMessage(ChatColor.RED + "You lack permission to set mine spawns.");
+                return true;
+            }
+
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /setminespawn <mine>");
+                return true;
+            }
+
+            String mineName = args[0].toLowerCase();
+
+            File minesFile = new File(getDataFolder(), "mines.yml");
+            FileConfiguration minesConfig = YamlConfiguration.loadConfiguration(minesFile);
+
+            if (!minesConfig.contains("mines." + mineName)) {
+                player.sendMessage(ChatColor.RED + "Mine '" + mineName + "' does not exist.");
+                return true;
+            }
+
+            Location loc = player.getLocation();
+            String path = "mines." + mineName + ".spawn";
+
+            minesConfig.set(path + ".world", loc.getWorld().getName());
+            minesConfig.set(path + ".x", loc.getX());
+            minesConfig.set(path + ".y", loc.getY());
+            minesConfig.set(path + ".z", loc.getZ());
+            minesConfig.set(path + ".yaw", loc.getYaw());
+            minesConfig.set(path + ".pitch", loc.getPitch());
+
+            try {
+                minesConfig.save(minesFile);
+                player.sendMessage(ChatColor.GREEN + "Mine spawn for '" + mineName + "' set to your current location.");
+            } catch (IOException e) {
+                player.sendMessage(ChatColor.RED + "Failed to save mine spawn location.");
+                e.printStackTrace();
+            }
+
+            return true;
+        }
+
         if (command.getName().equalsIgnoreCase("createmine")) {
             if (!player.hasPermission("universe.createmine")) {
                 player.sendMessage(ChatColor.RED + "You lack permission to create mines.");
@@ -466,8 +596,8 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             }
 
             String name = args[0].toLowerCase();
-            if (!Arrays.asList("ore", "wood", "nether").contains(name)) {
-                player.sendMessage(ChatColor.RED + "Invalid mine type. Choose ore, wood, or nether.");
+            if (!Arrays.asList("ore", "wood", "nether", "crystal").contains(name)) {
+                player.sendMessage(ChatColor.RED + "Invalid mine type. Choose ore, wood, crystal, or nether.");
                 return true;
             }
 
@@ -512,6 +642,10 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                 case "nether":
                     blockTypes = Arrays.asList("NETHERRACK", "NETHER_QUARTZ_ORE", "ANCIENT_DEBRIS", "MAGMA_BLOCK", "SOUL_SAND", "SOUL_SOIL", "BASALT", "BLACKSTONE");
                     fillerMaterials = Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
+                    break;
+                case "crystal":
+                    blockTypes = Arrays.asList("SEA_LANTERN", "OCHRE_FROGLIGHT", "VERDANT_FROGLIGHT", "PEARLESCENT_FROGLIGHT");
+                    fillerMaterials = Arrays.asList(Material.GLASS, Material.WHITE_STAINED_GLASS, Material.ORANGE_STAINED_GLASS, Material. MAGENTA_STAINED_GLASS, Material.LIGHT_BLUE_STAINED_GLASS, Material.YELLOW_STAINED_GLASS, Material.LIME_STAINED_GLASS, Material.PINK_STAINED_GLASS, Material.GRAY_STAINED_GLASS, Material.LIGHT_GRAY_STAINED_GLASS, Material.CYAN_STAINED_GLASS, Material.PURPLE_STAINED_GLASS, Material.BLUE_STAINED_GLASS, Material.BROWN_STAINED_GLASS, Material.GREEN_STAINED_GLASS, Material.RED_STAINED_GLASS, Material.BLACK_STAINED_GLASS, Material.TINTED_GLASS);
                     break;
                 default:
                     blockTypes = Collections.singletonList("STONE");
@@ -1406,14 +1540,56 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             if (!config.contains("mines")) return;
 
             for (String name : config.getConfigurationSection("mines").getKeys(false)) {
-                String worldName = minesConfig.getString("mines." + name + ".world");
+                String worldName = config.getString("mines." + name + ".world");
 
-                ConfigurationSection pos1Section = minesConfig.getConfigurationSection("mines." + name + ".pos1");
-                ConfigurationSection pos2Section = minesConfig.getConfigurationSection("mines." + name + ".pos2");
+                ConfigurationSection pos1Section = config.getConfigurationSection("mines." + name + ".pos1");
+                ConfigurationSection pos2Section = config.getConfigurationSection("mines." + name + ".pos2");
 
                 Location pos1 = deserializeLocation(pos1Section, worldName);
                 Location pos2 = deserializeLocation(pos2Section, worldName);
 
+                if (pos1 == null || pos2 == null) continue;
+
+                World world = Bukkit.getWorld(worldName);
+                if (world == null) continue;
+
+                int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
+                int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
+                int minY = Math.min(pos1.getBlockY(), pos2.getBlockY());
+                int maxY = Math.max(pos1.getBlockY(), pos2.getBlockY());
+                int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
+                int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
+
+                // 📦 Teleport players to top center before reset
+                int teleportX = (minX + maxX) / 2;
+                int teleportZ = (minZ + maxZ) / 2;
+                int teleportY = maxY - 1; // Some buffer above the mine
+
+                ConfigurationSection spawnSection = minesConfig.getConfigurationSection("mines." + name + ".spawn");
+                Location spawnLoc = deserializeLocation(spawnSection, worldName);
+
+                if (spawnLoc == null) {
+                    // Default to calculated top-center
+                    spawnLoc = new Location(world, teleportX + 0.5, teleportY, teleportZ + 0.5);
+                }
+
+                for (Player player : world.getPlayers()) {
+                    Location loc = player.getLocation();
+                    int bx = loc.getBlockX();
+                    int by = loc.getBlockY();
+                    int bz = loc.getBlockZ();
+
+                    if (bx >= minX && bx <= maxX &&
+                            by >= minY && by <= maxY &&
+                            bz >= minZ && bz <= maxZ) {
+
+                        player.teleport(spawnLoc);
+                        player.sendMessage(ChatColor.YELLOW + "You've been moved while the mine resets.");
+                    }
+                }
+
+
+                // Continue to handle block filling
                 List<String> blockNames = config.getStringList("mines." + name + ".blocks");
                 List<Material> specialBlocks = blockNames.stream().map(Material::valueOf).collect(Collectors.toList());
 
@@ -1428,24 +1604,29 @@ if (command.getName().equalsIgnoreCase("createisland")) {
                     case "nether":
                         fillerBlocks = Arrays.asList(Material.GLOWSTONE, Material.NETHER_GOLD_ORE, Material.NETHER_QUARTZ_ORE, Material.SHROOMLIGHT);
                         break;
+                    case "crystal":
+                        fillerBlocks = Arrays.asList(Material.GLASS, Material.WHITE_STAINED_GLASS, Material.ORANGE_STAINED_GLASS,
+                                Material.MAGENTA_STAINED_GLASS, Material.LIGHT_BLUE_STAINED_GLASS, Material.YELLOW_STAINED_GLASS,
+                                Material.LIME_STAINED_GLASS, Material.PINK_STAINED_GLASS, Material.GRAY_STAINED_GLASS,
+                                Material.LIGHT_GRAY_STAINED_GLASS, Material.CYAN_STAINED_GLASS, Material.PURPLE_STAINED_GLASS,
+                                Material.BLUE_STAINED_GLASS, Material.BROWN_STAINED_GLASS, Material.GREEN_STAINED_GLASS,
+                                Material.RED_STAINED_GLASS, Material.BLACK_STAINED_GLASS, Material.TINTED_GLASS);
+                        break;
                     default:
                         fillerBlocks = Collections.singletonList(Material.STONE);
                 }
 
-                World world = Bukkit.getWorld(worldName);
-                if (world == null || pos1 == null || pos2 == null) continue;
-
-                int minX = Math.min(pos1.getBlockX(), pos2.getBlockX()) + 2;
-                int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX()) - 2;
-                int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ()) + 2;
-                int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ()) - 2;
-                int baseY = Math.min(pos1.getBlockY(), pos2.getBlockY()) + 1;
-                int topY = baseY + 58;
+                int fillMinX = minX + 2;
+                int fillMaxX = maxX - 2;
+                int fillMinZ = minZ + 2;
+                int fillMaxZ = maxZ - 2;
+                int fillMinY = minY + 1;
+                int fillTopY = fillMinY + 58;
 
                 Random rand = new Random();
-                for (int x = minX; x < maxX; x++) {
-                    for (int z = minZ; z < maxZ; z++) {
-                        for (int y = baseY; y < topY; y++) {
+                for (int x = fillMinX; x < fillMaxX; x++) {
+                    for (int z = fillMinZ; z < fillMaxZ; z++) {
+                        for (int y = fillMinY; y < fillTopY; y++) {
                             Material mat = rand.nextDouble() < 0.20
                                     ? specialBlocks.get(rand.nextInt(specialBlocks.size()))
                                     : fillerBlocks.get(rand.nextInt(fillerBlocks.size()));
@@ -1456,4 +1637,5 @@ if (command.getName().equalsIgnoreCase("createisland")) {
             }
         }, 0L, 20L * 60 * 30); // Every 30 minutes
     }
+
 }

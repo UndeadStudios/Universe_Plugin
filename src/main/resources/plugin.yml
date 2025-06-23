@@ -79,6 +79,11 @@ commands:
     usage: /resetmine <ore|wood|nether>
     permission: universe.resetmine
     permission-message: You do not have permission to reset mines.
+  setminespawn:
+    description: Sets the respawn location for a mine.
+    usage: /setminespawn <mine>
+    permission: universe.setminespawn
+    permission-message: You do not have permission to set mine spawn locations.
 permissions:
   universe.island.modify:
     description: Allows players to bypass island protections and modify any island.
@@ -135,4 +140,7 @@ permissions:
     default: op
   universe.resetmine:
     description: Allows resetting mines.
+    default: op
+  universe.setminespawn:
+    description: Allows the player to set the teleport location for a mine using /setminespawn.
     default: op
