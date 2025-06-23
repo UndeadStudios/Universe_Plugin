@@ -62,7 +62,7 @@ public class Universe extends JavaPlugin implements Listener {
        // Add a map to track which players are trusted on an island
 // Map to store the trusted players for each island
        private Map<UUID, Set<UUID>> trustedPlayers = new HashMap<>();
-
+    private MoneyManager moneyManager;
     private BlockTracker blockTracker;
     private Economy economy;
 
@@ -103,7 +103,7 @@ public class Universe extends JavaPlugin implements Listener {
         }
 
         minesConfig = YamlConfiguration.loadConfiguration(minesFile);
-
+        this.moneyManager = new MoneyManager(getDataFolder());
         saveDefaultConfig();
         FileConfiguration config = getConfig();
 
@@ -237,6 +237,7 @@ public class Universe extends JavaPlugin implements Listener {
 
 @Override
 public void onDisable() {
+    moneyManager.saveBalances();
     int savedIslands = 0;
 
     for (UUID playerId : islandCenters.keySet()) {
@@ -814,19 +815,20 @@ private void giveUniverseMenuItem(Player player) {
 
         // Handle the "/expandisland" command
         if (command.getName().equalsIgnoreCase("expandisland")) {
+
             // Check if the player has an island
             if (!islandCenters.containsKey(playerId)) {
                 player.sendMessage(ChatColor.RED + "You don't have an island yet!");
                 return true;
             }
-
+            UUID uuid = player.getUniqueId();
             // Calculate the cost for expansion based on the current island size
             int currentSize = islandSizes.get(playerId);
             int expansionCost = 50000 * currentSize;
 
             // Check if the player has enough balance
-            if (economy.getBalance(player) < expansionCost) {
-                player.sendMessage(ChatColor.RED + "You need at least " + expansionCost + " coins to expand the realm!");
+            if (getMoneyManager().getBalance(uuid) < expansionCost) {
+                player.sendMessage(ChatColor.RED + "You need at least " + expansionCost + " tokens to expand the realm!");
                 return true;
             }
 
@@ -840,7 +842,7 @@ private void giveUniverseMenuItem(Player player) {
             }
 
             // Withdraw the cost from the player's balance
-            economy.withdrawPlayer(player, expansionCost);
+            getMoneyManager().withdraw(uuid, expansionCost);
 
             // Get the current center of the island
             Location center = islandCenters.get(playerId);
@@ -855,7 +857,7 @@ private void giveUniverseMenuItem(Player player) {
             player.sendMessage(ChatColor.GREEN + "Island expanded to " + newSize + "x" + newSize + "!");
 
             // Optional: Notify player of remaining balance
-            double remainingBalance = economy.getBalance(player);
+            double remainingBalance = getMoneyManager().getBalance(uuid);
             player.sendMessage(ChatColor.YELLOW + "Your remaining balance: " + remainingBalance + " coins.");
 
             return true;
@@ -882,14 +884,13 @@ private void giveUniverseMenuItem(Player player) {
                 player.sendMessage(ChatColor.RED + "Vault is not set up properly.");
                 return true;
             }
-
-            net.milkbowl.vault.economy.Economy econ = getServer().getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class).getProvider();
-            if (econ.getBalance(player) < cost) {
-                player.sendMessage(ChatColor.RED + "You need $" + cost + " to upgrade your generator.");
+            UUID uuid = player.getUniqueId();
+            if (getMoneyManager().getBalance(uuid) < cost) {
+                player.sendMessage(ChatColor.RED + "You need " + cost + " tokens to upgrade your generator.");
                 return true;
             }
 
-            econ.withdrawPlayer(player, cost);
+            getMoneyManager().withdraw(uuid, cost);
             islandGeneratorLevels.put(playerId, currentLevel + 1);
             player.sendMessage(ChatColor.GREEN + "Generator upgraded to level " + (currentLevel + 1) + "!");
             return true;
@@ -917,10 +918,20 @@ private void giveUniverseMenuItem(Player player) {
         }
 
         if (command.getName().equalsIgnoreCase("balance")) {
-            double balance = economy.getBalance(player);
-            player.sendMessage(ChatColor.GREEN + "Your balance: " + balance + " coins.");
+            UUID uuid = player.getUniqueId();
+
+            // Default (Vault) balance, if used
+            double vaultBalance = economy.getBalance(player);
+
+            // Custom balance from your MoneyManager
+            double universeCoins = getMoneyManager().getBalance(uuid);
+
+            player.sendMessage(ChatColor.GOLD + "=== Your Balances ===");
+            player.sendMessage(ChatColor.YELLOW + "Money: " + ChatColor.GREEN + vaultBalance);
+            player.sendMessage(ChatColor.AQUA + "Universe tokens: " + ChatColor.LIGHT_PURPLE + universeCoins);
             return true;
         }
+
         if (command.getName().equalsIgnoreCase("setbiome")) {
             if (!islandCenters.containsKey(playerId)) {
                 player.sendMessage(ChatColor.RED + "You don't have an island yet!");
@@ -1719,7 +1730,80 @@ private void giveUniverseMenuItem(Player player) {
                     }
                 }.runTaskTimer(this, 0L, 1L); // Smooth reset over multiple ticks
             }
-        }, 0L, 20L * 60 * 30); // Every 30 minutes
+        }, 0L, 20L * 60 * 90); // Every 130 minutes
+    }
+    @EventHandler
+    public void onSignClick(PlayerInteractEvent event) {
+        if (event.getAction() != Action.LEFT_CLICK_BLOCK) return;
+        if (!(event.getClickedBlock().getState() instanceof Sign sign)) return;
+
+        String[] lines = sign.getLines();
+        if (!lines[0].equalsIgnoreCase("[Shop]")) return;
+
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        String mode = lines[1].toUpperCase();
+
+        String[] itemSplit = lines[2].split(" ");
+        if (itemSplit.length != 2) return;
+
+        int amount;
+        double price;
+        try {
+            amount = Integer.parseInt(itemSplit[0]);
+            price = Double.parseDouble(lines[3].replace("$", ""));
+        } catch (NumberFormatException e) {
+            player.sendMessage(ChatColor.RED + "Invalid shop sign format.");
+            return;
+        }
+
+        Material material = Material.matchMaterial(itemSplit[1]);
+        if (material == null) {
+            player.sendMessage(ChatColor.RED + "Unknown item type.");
+            return;
+        }
+
+        ItemStack item = new ItemStack(material, amount);
+
+        if (mode.equals("BUY")) {
+            if (getMoneyManager().getBalance(uuid) < price) {
+                player.sendMessage(ChatColor.RED + "You don't have enough money.");
+                return;
+            }
+
+            if (player.getInventory().firstEmpty() == -1) {
+                player.sendMessage(ChatColor.RED + "Your inventory is full.");
+                return;
+            }
+
+            getMoneyManager().withdraw(uuid, price);
+            player.getInventory().addItem(item);
+            player.sendMessage(ChatColor.GREEN + "You bought " + amount + "x " + material.name() + " for " + price+" tokens.");
+        }
+
+        else if (mode.equals("SELL")) {
+            if (!player.getInventory().containsAtLeast(item, amount)) {
+                player.sendMessage(ChatColor.RED + "You don't have enough items to sell.");
+                return;
+            }
+
+            removeItems(player.getInventory(), material, amount);
+            getMoneyManager().deposit(uuid, price);
+            player.sendMessage(ChatColor.GREEN + "You sold " + amount + "x " + material.name() + " for " + price+" tokens.");
+        }
+    }
+    public void removeItems(Inventory inv, Material material, int amount) {
+        for (ItemStack item : inv.getContents()) {
+            if (item != null && item.getType() == material) {
+                int removed = Math.min(item.getAmount(), amount);
+                item.setAmount(item.getAmount() - removed);
+                amount -= removed;
+                if (amount <= 0) break;
+            }
+        }
     }
 
+    public MoneyManager getMoneyManager() {
+        return moneyManager;
+    }
 }

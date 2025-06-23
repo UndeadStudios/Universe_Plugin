@@ -7,6 +7,9 @@ commands:
   help:
     description: Shows all Universe plugin commands.
     usage: /help
+  balance:
+    description: Shows your balances.
+    usage: /balance
   createisland:
     description: Creates a new island at a random location for the player.
     usage: /createisland
