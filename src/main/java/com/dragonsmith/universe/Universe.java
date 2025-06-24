@@ -1328,58 +1328,69 @@ private void generateIsland(Location center, int size, UUID playerId) {
     }.runTask(this); // Run the base island generation asynchronously
 }
 
-private void addNaturalOakTrees(Location center, int half, Random random) {
-    // Determine the number of trees and where to place them
-    int treeCount = random.nextInt(5) + 3; // 3 to 7 trees per island (you can adjust this number)
+private void addNaturalOakTrees(Location islandCenter, int halfIslandSize, Random random) {
+    // Define how many trees to generate (3 to 7 trees)
+    int treeCount = random.nextInt(5) + 3;
 
+    // Iterate through and place trees around the island center
     for (int i = 0; i < treeCount; i++) {
-        // Randomize tree location
-        int treeX = random.nextInt(half * 2 + 1) - half;
-        int treeZ = random.nextInt(half * 2 + 1) - half;
+        // Randomly calculate x and z offsets from the island center
+        int maxDistance = halfIslandSize; // Max distance from center to place trees
+        int offsetX = random.nextInt(maxDistance * 2) - maxDistance; // Random x offset within range
+        int offsetZ = random.nextInt(maxDistance * 2) - maxDistance; // Random z offset within range
 
-        Location treeBaseLocation = center.clone().add(treeX, 0, treeZ);
+        // Set the Y-coordinate to 57 for the tree base
+        Location baseLocation = islandCenter.clone().add(offsetX, 0, offsetZ);
+        baseLocation.setY(57);  // Ensure the tree starts at y = 57
 
-        // Make sure it's on solid ground (check if it's grass or dirt)
-        while (treeBaseLocation.getBlock().getType() != Material.GRASS_BLOCK && treeBaseLocation.getBlock().getType() != Material.DIRT) {
-            treeBaseLocation = treeBaseLocation.add(0, -1, 0); // Move down until we find solid ground
-            if (treeBaseLocation.getBlockY() < 0) break; // Prevent going below world height
+        // Check if the base location is on valid ground (grass or dirt)
+        if (baseLocation.getBlock().getType() != Material.GRASS_BLOCK && baseLocation.getBlock().getType() != Material.DIRT) {
+            continue; // Skip if not on solid ground
         }
 
-        if (treeBaseLocation.getBlockY() < 0) continue; // Skip if we couldn't find solid ground
+        // Log tree generation start (for debugging purposes)
+        Bukkit.getLogger().info("Generating tree at: " + baseLocation);
 
-        // Add the oak tree at the base location
-        generateOakTree(treeBaseLocation.add(0, 1, 0), random); // Offset by 1 to start above the ground
-    }
-}
+        // Set the base of the tree (wood)
+        baseLocation.getBlock().setType(Material.OAK_LOG); // Trunk base at the given location
+        updateBlock(baseLocation.getBlock()); // Force update to make it visible
 
-private void generateOakTree(Location baseLocation, Random random) {
-    // Set the base of the tree (wood)
-    baseLocation.getBlock().setType(Material.OAK_LOG);
+        // Random height for the tree (4 to 7 blocks tall)
+        int treeHeight = random.nextInt(4) + 4; // Random height between 4 and 7
 
-    // Random height for the tree (4 to 7 blocks tall)
-    int treeHeight = random.nextInt(4) + 4;
+        // Generate tree trunk
+        for (int j = 1; j < treeHeight; j++) {
+            Location trunkLocation = baseLocation.clone().add(0, j, 0);
+            trunkLocation.getBlock().setType(Material.OAK_LOG);
+            updateBlock(trunkLocation.getBlock()); // Force update to make it visible
+        }
 
-    // Generate tree trunk
-    for (int i = 1; i < treeHeight; i++) {
-        baseLocation.clone().add(0, i, 0).getBlock().setType(Material.OAK_LOG);
-    }
-
-    // Generate tree leaves (a simple spherical shape)
-    int leafRadius = 2; // A radius for the leaves around the tree
-    for (int x = -leafRadius; x <= leafRadius; x++) {
-        for (int y = -leafRadius; y <= leafRadius; y++) {
-            for (int z = -leafRadius; z <= leafRadius; z++) {
-                // Check if the block is within a spherical radius
-                if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= leafRadius) {
-                    Location leafLocation = baseLocation.clone().add(x, treeHeight - 1 + y, z);
-                    if (leafLocation.getBlock().getType() == Material.AIR) {
-                        leafLocation.getBlock().setType(Material.OAK_LEAVES);
+        // Generate tree leaves (a simple spherical shape)
+        int leafRadius = 2; // A radius for the leaves around the tree
+        for (int x = -leafRadius; x <= leafRadius; x++) {
+            for (int y = -leafRadius; y <= leafRadius; y++) {
+                for (int z = -leafRadius; z <= leafRadius; z++) {
+                    // Check if the block is within a spherical radius
+                    if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= leafRadius) {
+                        Location leafLocation = baseLocation.clone().add(x, treeHeight - 1 + y, z); // Leaves are placed around the top of the trunk
+                        if (leafLocation.getBlock().getType() == Material.AIR) { // Only place leaves if the block is air
+                            leafLocation.getBlock().setType(Material.OAK_LEAVES);
+                            updateBlock(leafLocation.getBlock()); // Force update to make it visible
+                        }
                     }
                 }
             }
         }
+
+        // Log tree generation completion (for debugging purposes)
+        Bukkit.getLogger().info("Tree generated at: " + baseLocation);
     }
 }
+
+private void updateBlock(Block block) {
+    block.getState().update(true); // Force block update
+}
+
     private void loadChunks(Location center, int half) {
         // Load nearby chunks asynchronously for future island expansion
         new BukkitRunnable() {
