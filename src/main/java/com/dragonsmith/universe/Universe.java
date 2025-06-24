@@ -1289,41 +1289,97 @@ private void giveUniverseMenuItem(Player player) {
     }
 
 
-    private void generateBaseIsland(Location center, int size, UUID playerId) {
-        int half = size / 2;
-        Random random = new Random();
+private void generateIsland(Location center, int size, UUID playerId) {
+    int half = size / 2;
+    Random random = new Random();
 
-        // Fast generation of the basic island layout (core, bedrock, stone, etc.)
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                // Generate basic terrain for island's core
-                for (int x = -half; x <= half; x++) {
-                    for (int z = -half; z <= half; z++) {
-                        for (int y = -64; y <= 56; y++) {
-                            Location loc = center.clone().add(x, y, z);
+    // Step 1: Generate the base island quickly
+    new BukkitRunnable() {
+        @Override
+        public void run() {
+            // Generate core of the island (bedrock, stone, dirt, etc.)
+            for (int x = -half; x <= half; x++) {
+                for (int z = -half; z <= half; z++) {
+                    for (int y = -64; y <= 56; y++) {
+                        Location loc = center.clone().add(x, y, z);
 
-                            // Skip blocks that have been broken by the player
-                            if (blockTracker.isBlockBroken(playerId, loc)) {
-                                continue; // Don't modify this block
-                            }
+                        // Skip blocks that have been broken by the player
+                        if (blockTracker.isBlockBroken(playerId, loc)) {
+                            continue; // Don't modify this block
+                        }
 
-                            // Only modify air blocks (or bedrock for the bottom-most layer)
-                            if (loc.getBlock().getType() == Material.AIR || loc.getBlock().getType() == Material.BEDROCK) {
-                                Material materialToPlace = determineBlockMaterial(y, random);
-                                if (materialToPlace != null) {
-                                    loc.getBlock().setType(materialToPlace);
-                                }
+                        // Only modify air blocks (or bedrock for the bottom-most layer)
+                        if (loc.getBlock().getType() == Material.AIR || loc.getBlock().getType() == Material.BEDROCK) {
+                            Material materialToPlace = determineBlockMaterial(y, random);
+                            if (materialToPlace != null) {
+                                loc.getBlock().setType(materialToPlace);
                             }
                         }
                     }
                 }
-
-                // After base generation, you can load chunks and then allow island extension
-                loadChunks(center, half); // Load the chunks for future expansion
             }
-        }.runTask(this); // Run asynchronously for a quick base generation
+
+            // Step 2: Add Oak Trees
+            addNaturalOakTrees(center, half, random);
+
+            // Step 3: Load chunks asynchronously around the island
+            loadChunks(center, half); // Load chunks around the island for future expansion
+        }
+    }.runTask(this); // Run the base island generation asynchronously
+}
+
+private void addNaturalOakTrees(Location center, int half, Random random) {
+    // Determine the number of trees and where to place them
+    int treeCount = random.nextInt(5) + 3; // 3 to 7 trees per island (you can adjust this number)
+
+    for (int i = 0; i < treeCount; i++) {
+        // Randomize tree location
+        int treeX = random.nextInt(half * 2 + 1) - half;
+        int treeZ = random.nextInt(half * 2 + 1) - half;
+
+        Location treeBaseLocation = center.clone().add(treeX, 0, treeZ);
+
+        // Make sure it's on solid ground (check if it's grass or dirt)
+        while (treeBaseLocation.getBlock().getType() != Material.GRASS_BLOCK && treeBaseLocation.getBlock().getType() != Material.DIRT) {
+            treeBaseLocation = treeBaseLocation.add(0, -1, 0); // Move down until we find solid ground
+            if (treeBaseLocation.getBlockY() < 0) break; // Prevent going below world height
+        }
+
+        if (treeBaseLocation.getBlockY() < 0) continue; // Skip if we couldn't find solid ground
+
+        // Add the oak tree at the base location
+        generateOakTree(treeBaseLocation.add(0, 1, 0), random); // Offset by 1 to start above the ground
     }
+}
+
+private void generateOakTree(Location baseLocation, Random random) {
+    // Set the base of the tree (wood)
+    baseLocation.getBlock().setType(Material.OAK_LOG);
+
+    // Random height for the tree (4 to 7 blocks tall)
+    int treeHeight = random.nextInt(4) + 4;
+
+    // Generate tree trunk
+    for (int i = 1; i < treeHeight; i++) {
+        baseLocation.clone().add(0, i, 0).getBlock().setType(Material.OAK_LOG);
+    }
+
+    // Generate tree leaves (a simple spherical shape)
+    int leafRadius = 2; // A radius for the leaves around the tree
+    for (int x = -leafRadius; x <= leafRadius; x++) {
+        for (int y = -leafRadius; y <= leafRadius; y++) {
+            for (int z = -leafRadius; z <= leafRadius; z++) {
+                // Check if the block is within a spherical radius
+                if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= leafRadius) {
+                    Location leafLocation = baseLocation.clone().add(x, treeHeight - 1 + y, z);
+                    if (leafLocation.getBlock().getType() == Material.AIR) {
+                        leafLocation.getBlock().setType(Material.OAK_LEAVES);
+                    }
+                }
+            }
+        }
+    }
+}
     private void loadChunks(Location center, int half) {
         // Load nearby chunks asynchronously for future island expansion
         new BukkitRunnable() {
