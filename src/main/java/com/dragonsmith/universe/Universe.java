@@ -14,6 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.block.*;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.Listener;
@@ -23,6 +24,7 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -75,7 +77,7 @@ public class Universe extends JavaPlugin implements Listener {
     private int spawnHeight; // Loaded from config
     private File minesFile;
     private FileConfiguration minesConfig;
-
+    private SellBoostManager sellBoostManager;
     @Override
     public void onEnable() {
 
@@ -105,6 +107,12 @@ public class Universe extends JavaPlugin implements Listener {
         minesConfig = YamlConfiguration.loadConfiguration(minesFile);
         this.moneyManager = new MoneyManager(getDataFolder());
         saveDefaultConfig();
+        this.sellBoostManager = new SellBoostManager();
+
+        // Schedule periodic cleanup of expired boosts (every 5 minutes)
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            sellBoostManager.clearExpired();
+        }, 20L * 60 * 5, 20L * 60 * 5);
         FileConfiguration config = getConfig();
 
         islandSpacing = config.getInt("island.spacing", 1012);
@@ -221,6 +229,7 @@ public class Universe extends JavaPlugin implements Listener {
         getCommand("createisland").setTabCompleter(this);
         getCommand("expandisland").setTabCompleter(this);
         getCommand("balance").setTabCompleter(this);
+        getCommand("setbiome").setExecutor(this);
         this.getCommand("setbiome").setTabCompleter(new SetBiomeTabCompleter());
         getCommand("ignoreclaims").setExecutor(this);
         getCommand("islandinfo").setExecutor(this);
@@ -231,6 +240,8 @@ public class Universe extends JavaPlugin implements Listener {
         getCommand("setvisitspawn").setExecutor(this);
         getCommand("islandlock").setExecutor(this);
         getCommand("help").setExecutor(this);
+        getCommand("convert").setExecutor(this);
+        getCommand("boostsell").setExecutor(this);
         getLogger().info("Universe plugin has been enabled!");
     }
 
@@ -824,7 +835,7 @@ private void giveUniverseMenuItem(Player player) {
             UUID uuid = player.getUniqueId();
             // Calculate the cost for expansion based on the current island size
             int currentSize = islandSizes.get(playerId);
-            int expansionCost = 50000 * currentSize;
+            int expansionCost = 10000 * currentSize;
 
             // Check if the player has enough balance
             if (getMoneyManager().getBalance(uuid) < expansionCost) {
@@ -860,6 +871,38 @@ private void giveUniverseMenuItem(Player player) {
             double remainingBalance = getMoneyManager().getBalance(uuid);
             player.sendMessage(ChatColor.YELLOW + "Your remaining balance: " + remainingBalance + " coins.");
 
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("boostsell")) {
+            if (!player.hasPermission("universe.adminboostsell")) {
+                player.sendMessage(ChatColor.RED + "You don't have permission to do that.");
+                return true;
+            }
+
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Usage: /boostsell <multiplier>");
+                return true;
+            }
+
+            double multiplier;
+            try {
+                multiplier = Double.parseDouble(args[0]);
+                if (multiplier <= 1.0) {
+                    player.sendMessage(ChatColor.RED + "Multiplier must be greater than 1.0.");
+                    return true;
+                }
+            } catch (NumberFormatException e) {
+                player.sendMessage(ChatColor.RED + "Invalid number.");
+                return true;
+            }
+
+            long duration = 30 * 60 * 1000L; // 30 minutes
+            for (Player online : Bukkit.getOnlinePlayers()) {
+                sellBoostManager.giveBoost(online.getUniqueId(), multiplier, duration);
+                online.sendMessage(ChatColor.GOLD + "A global sell boost of " + multiplier + "x has been activated for 30 minutes!");
+            }
+
+            player.sendMessage(ChatColor.GREEN + "Sell boost applied to all players.");
             return true;
         }
 
@@ -952,12 +995,27 @@ private void giveUniverseMenuItem(Player player) {
                 int size = islandSizes.get(playerId);
                 setBiome(center, size, biome);
 
+                // Force chunk refresh
+                World world = center.getWorld();
+                int minX = center.getBlockX() - size / 2;
+                int minZ = center.getBlockZ() - size / 2;
+                int maxX = center.getBlockX() + size / 2;
+                int maxZ = center.getBlockZ() + size / 2;
+
+                for (int x = minX; x <= maxX; x += 16) {
+                    for (int z = minZ; z <= maxZ; z += 16) {
+                        Chunk chunk = world.getChunkAt(new Location(world, x, 0, z));
+                        world.refreshChunk(chunk.getX(), chunk.getZ()); // Force client to reload chunk data
+                    }
+                }
+
                 player.sendMessage(ChatColor.GREEN + "Biome changed to " + biome.name() + "!");
             } catch (IllegalArgumentException e) {
                 player.sendMessage(ChatColor.RED + "Invalid biome name!");
             }
             return true;
         }
+
         if (command.getName().equalsIgnoreCase("trust") && sender instanceof Player) {
             player = (Player) sender;
             UUID ownerId = player.getUniqueId();
@@ -1019,39 +1077,40 @@ private void giveUniverseMenuItem(Player player) {
                 return false; // Incorrect usage, show help
             }
         }
-
-
         if (command.getName().equalsIgnoreCase("visit")) {
-            if (args.length != 1) {
-                player.sendMessage(ChatColor.RED + "Usage: /visit <player>");
-                return true;
+            Inventory gui = Bukkit.createInventory(null, 54, ChatColor.DARK_AQUA + "Visitable Islands");
+
+            Set<UUID> uniquePlayers = new HashSet<>();
+            uniquePlayers.addAll(islandCenters.keySet());
+
+            for (UUID targetId : uniquePlayers) {
+                OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(targetId);
+
+                boolean isLocked = islandLocks.getOrDefault(targetId, false);
+                String lockStatus = isLocked ? ChatColor.RED + "Locked" : ChatColor.GREEN + "Unlocked";
+
+                ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+                SkullMeta meta = (SkullMeta) head.getItemMeta();
+
+                if (meta != null) {
+                    meta.setOwningPlayer(offlinePlayer);
+                    meta.setDisplayName(ChatColor.GOLD + offlinePlayer.getName());
+
+                    List<String> lore = new ArrayList<>();
+                    lore.add(ChatColor.GRAY + "Island Access: " + lockStatus);
+                    lore.add(ChatColor.YELLOW + "Click to visit");
+                    meta.setLore(lore);
+                    head.setItemMeta(meta);
+                }
+
+                gui.addItem(head);
             }
 
-            Player target = Bukkit.getPlayer(args[0]);
-            if (target == null) {
-                player.sendMessage(ChatColor.RED + "Player not found or not online.");
-                return true;
-            }
-
-            UUID targetId = target.getUniqueId();
-
-            if (!islandCenters.containsKey(targetId)) {
-                player.sendMessage(ChatColor.RED + "That player does not have an island.");
-                return true;
-            }
-
-            if (islandLocks.getOrDefault(targetId, false)) {
-                player.sendMessage(ChatColor.RED + "This island is locked and cannot be visited.");
-                return true;
-            }
-
-            Location visitLoc = visitSpawns.getOrDefault(targetId,
-                    islandCenters.get(targetId).clone().add(0, 57, 0)); // Fallback center
-
-            player.teleport(visitLoc);
-            player.sendMessage(ChatColor.GREEN + "You are now visiting " + target.getName() + "'s island!");
+            player.openInventory(gui);
             return true;
         }
+
+
         if (command.getName().equalsIgnoreCase("setvisitspawn")) {
             if (!islandCenters.containsKey(playerId)) {
                 player.sendMessage(ChatColor.RED + "You don't own an island.");
@@ -1102,6 +1161,56 @@ private void giveUniverseMenuItem(Player player) {
             player.sendMessage(ChatColor.YELLOW + "/setvisitspawn" + ChatColor.GRAY + " - Set where visitors land on your island.");
             player.sendMessage(ChatColor.YELLOW + "/islandlock [on/off]" + ChatColor.GRAY + " - Lock/unlock your island.");
             player.sendMessage(ChatColor.YELLOW + "/visit <player>" + ChatColor.GRAY + " - Visit another player's island.");
+            return true;
+        }
+        if (command.getName().equalsIgnoreCase("convert")) {
+            if (args.length != 2) {
+                player.sendMessage(ChatColor.RED + "Usage: /convert <toTokens|toMoney> <amount>");
+                return true;
+            }
+
+            String direction = args[0].toLowerCase();
+            double amount;
+
+            try {
+                amount = Double.parseDouble(args[1]);
+                if (amount <= 0) throw new NumberFormatException();
+            } catch (NumberFormatException e) {
+                player.sendMessage(ChatColor.RED + "Invalid amount.");
+                return true;
+            }
+
+            UUID uuid = player.getUniqueId();
+            MoneyManager moneyManager = getMoneyManager();
+
+            if (direction.equals("totokens")) {
+                double required = amount * 10.0;
+
+                if (economy.getBalance(player) < required) {
+                    player.sendMessage(ChatColor.RED + "You need $" + required + " to get " + amount + " tokens.");
+                    return true;
+                }
+
+                economy.withdrawPlayer(player, required);
+                moneyManager.deposit(uuid, amount);
+                player.sendMessage(ChatColor.GREEN + "Converted $" + required + " into " + amount + " tokens.");
+                return true;
+            }
+
+            if (direction.equals("tomoney")) {
+                if (moneyManager.getBalance(uuid) < amount) {
+                    player.sendMessage(ChatColor.RED + "You don't have " + amount + " tokens.");
+                    return true;
+                }
+
+                double returned = amount * 10.0;
+                moneyManager.withdraw(uuid, amount);
+                economy.depositPlayer(player, returned);
+                player.sendMessage(ChatColor.GREEN + "Converted " + amount + " tokens into $" + returned + ".");
+                return true;
+            }
+
+            player.sendMessage(ChatColor.RED + "Usage: /convert <toTokens|toMoney> <amount>");
             return true;
         }
 
@@ -1786,10 +1895,11 @@ private void giveUniverseMenuItem(Player player) {
                 player.sendMessage(ChatColor.RED + "You don't have enough items to sell.");
                 return;
             }
-
+            double multiplier = sellBoostManager.getMultiplier(player.getUniqueId());
+            double price2 = price * multiplier;
             removeItems(player.getInventory(), material, amount);
-            getMoneyManager().deposit(uuid, price);
-            player.sendMessage(ChatColor.GREEN + "You sold " + amount + "x " + material.name() + " for " + price+" tokens.");
+            getMoneyManager().deposit(uuid, price2);
+            player.sendMessage(ChatColor.GREEN + "You sold " + amount + "x " + material.name() + " for " + price2+" tokens.");
         }
     }
     public void removeItems(Inventory inv, Material material, int amount) {
@@ -1806,4 +1916,42 @@ private void giveUniverseMenuItem(Player player) {
     public MoneyManager getMoneyManager() {
         return moneyManager;
     }
+
+    @EventHandler
+    public void onVisitGUIClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getView().getTitle() == null || !event.getView().getTitle().contains("Visitable Islands")) return;
+
+        event.setCancelled(true); // Prevent taking items
+
+        ItemStack clicked = event.getCurrentItem();
+        if (clicked == null || clicked.getType() != Material.PLAYER_HEAD) return;
+
+        SkullMeta meta = (SkullMeta) clicked.getItemMeta();
+        if (meta == null || meta.getOwningPlayer() == null) return;
+
+        OfflinePlayer targetPlayer = meta.getOwningPlayer();
+        UUID targetId = targetPlayer.getUniqueId();
+
+        if (!islandCenters.containsKey(targetId)) {
+            player.sendMessage(ChatColor.RED + "That player does not have an island.");
+            return;
+        }
+
+        boolean isLocked = islandLocks.getOrDefault(targetId, false);
+        if (isLocked) {
+            player.sendMessage(ChatColor.RED + "This island is locked and cannot be visited.");
+            return;
+        }
+
+        Location visitLoc = visitSpawns.getOrDefault(
+                targetId,
+                islandCenters.get(targetId).clone().add(0, 57, 0)
+        );
+
+        player.teleport(visitLoc);
+        player.sendMessage(ChatColor.GREEN + "You are now visiting " + targetPlayer.getName() + "'s island!");
+        player.closeInventory();
+    }
+
 }

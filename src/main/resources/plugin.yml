@@ -10,6 +10,10 @@ commands:
   balance:
     description: Shows your balances.
     usage: /balance
+  convert:
+    description: Convert money to tokens or tokens to money
+    usage: /convert <toTokens|toMoney> <amount>
+    permission: universe.convert
   createisland:
     description: Creates a new island at a random location for the player.
     usage: /createisland
@@ -59,9 +63,8 @@ commands:
     permission-message: You don't have permission to untrust other players on your island!
 
   visit:
-    description: Visit another player's island.
-    usage: /visit <player>
-
+    description: Opens a GUI to visit other players' islands.
+    usage: /visit
   setvisitspawn:
     description: Set where visitors land on your island.
     usage: /setvisitspawn
@@ -95,6 +98,10 @@ commands:
     usage: /setminespawn <mine>
     permission: universe.setminespawn
     permission-message: You do not have permission to set mine spawn locations.
+  boostsell:
+    description: Admin command to boost all player sell profits
+    usage: /boostsell <multiplier>
+    permission: universe.adminboostsell
 permissions:
   universe.island.modify:
     description: Allows players to bypass island protections and modify any island.
@@ -102,11 +109,13 @@ permissions:
   universe.createmine:
     default: op
     description: Allows staff to create mines using wand selection
-
+  universe.convert:
+    default: true
   universe.island.bypass:
     description: Allows players to bypass all island restrictions (admin override).
     default: op
-
+  universe.adminboostsell:
+    default: op
   universe.createisland:
     description: Allows players to create their own island.
     default: true
