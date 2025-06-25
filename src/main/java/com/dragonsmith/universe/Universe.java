@@ -189,6 +189,17 @@ public class Universe extends JavaPlugin implements Listener {
                         case "upgrade generator":
                             player.performCommand("upgradegenerator");
                             break;
+                        case "unlock island":
+                            islandLocks.put(player.getUniqueId(), false);
+                            player.sendMessage(ChatColor.GREEN + "Your island is now unlocked. Players can visit.");
+                            reopenMenuLater(player);
+                            break;
+
+                        case "lock island":
+                            islandLocks.put(player.getUniqueId(), true);
+                            player.sendMessage(ChatColor.RED + "Your island is now locked. Players cannot visit.");
+                            reopenMenuLater(player);
+                            break;
                     }
                     player.closeInventory();
                 }
@@ -293,6 +304,9 @@ public void onDisable() {
         confirmGui.setItem(4, createMenuItem(Material.TNT, ChatColor.RED + "Confirm Delete"));
         player.openInventory(confirmGui);
     }
+    private boolean isIslandLocked(UUID playerId) {
+        return islandLocks.getOrDefault(playerId, false);
+    }
 
     private void openUniverseMenu(Player player) {
         // Create 1-row GUI titled "Universe Menu"
@@ -303,9 +317,20 @@ public void onDisable() {
         gui.setItem(2, createMenuItem(Material.OAK_DOOR, ChatColor.YELLOW + "Go Home"));
         gui.setItem(3, createMenuItem(Material.IRON_BLOCK, ChatColor.AQUA + "Expand Island"));
         gui.setItem(4, createMenuItem(Material.ANVIL, ChatColor.LIGHT_PURPLE + "Upgrade Generator"));
+        boolean locked = isIslandLocked(player.getUniqueId());
+        Material lockMaterial = locked ? Material.GREEN_WOOL : Material.RED_WOOL;
+        String lockStatus = locked
+                ? ChatColor.GREEN + "Unlock Island"  // It's locked → offer to unlock
+                : ChatColor.RED + "Lock Island";     // It's unlocked → offer to lock
+
+
+        gui.setItem(5, createMenuItem(lockMaterial, lockStatus));
 
         // Open the GUI for the player
         player.openInventory(gui);
+    }
+    private void reopenMenuLater(Player player) {
+        Bukkit.getScheduler().runTaskLater(this, () -> openUniverseMenu(player), 2L);
     }
 
     private org.bukkit.inventory.ItemStack createMenuItem(Material type, String name) {
@@ -424,12 +449,12 @@ private void giveUniverseMenuItem(Player player) {
             islandSizes.put(playerId, defaultIslandSize);
             islandGeneratorLevels.put(playerId, 1);
             islandBiomes.put(playerId, Biome.PLAINS);
-
+            int half = defaultIslandSize / 2;
             generateIsland(center, defaultIslandSize, playerId);
             world.getChunkAt(center).load();
             player.teleport(center.clone().add(0, 57, 0));
             giveStarterChest(center);
-
+            addNaturalOakTrees(center, half, random);
             player.sendMessage(ChatColor.GREEN + "Island created successfully!");
             return true;
         }
@@ -1251,42 +1276,6 @@ private void giveUniverseMenuItem(Player player) {
         }
     }
 
-    private void generateIsland(Location center, int size, UUID playerId) {
-        int half = size / 2;
-        Random random = new Random();
-
-        // Step 1: Generate the base island quickly
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                // Generate core of the island (bedrock, stone, dirt, etc.)
-                for (int x = -half; x <= half; x++) {
-                    for (int z = -half; z <= half; z++) {
-                        for (int y = -64; y <= 56; y++) {
-                            Location loc = center.clone().add(x, y, z);
-
-                            // Skip blocks that have been broken by the player
-                            if (blockTracker.isBlockBroken(playerId, loc)) {
-                                continue; // Don't modify this block
-                            }
-
-                            // Only modify air blocks (or bedrock for the bottom-most layer)
-                            if (loc.getBlock().getType() == Material.AIR || loc.getBlock().getType() == Material.BEDROCK) {
-                                Material materialToPlace = determineBlockMaterial(y, random);
-                                if (materialToPlace != null) {
-                                    loc.getBlock().setType(materialToPlace);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Step 2: Load chunks asynchronously around the island
-                loadChunks(center, half); // Load chunks around the island for future expansion
-
-            }
-        }.runTask(this); // Run the base island generation asynchronously
-    }
 
 
 private void generateIsland(Location center, int size, UUID playerId) {
@@ -1320,7 +1309,7 @@ private void generateIsland(Location center, int size, UUID playerId) {
             }
 
             // Step 2: Add Oak Trees
-            addNaturalOakTrees(center, half, random);
+
 
             // Step 3: Load chunks asynchronously around the island
             loadChunks(center, half); // Load chunks around the island for future expansion
@@ -1340,8 +1329,7 @@ private void addNaturalOakTrees(Location islandCenter, int halfIslandSize, Rando
         int offsetZ = random.nextInt(maxDistance * 2) - maxDistance; // Random z offset within range
 
         // Set the Y-coordinate to 57 for the tree base
-        Location baseLocation = islandCenter.clone().add(offsetX, 0, offsetZ);
-        baseLocation.setY(57);  // Ensure the tree starts at y = 57
+        Location baseLocation = islandCenter.clone().add(offsetX, 57, offsetZ);
 
         // Check if the base location is on valid ground (grass or dirt)
         if (baseLocation.getBlock().getType() != Material.GRASS_BLOCK && baseLocation.getBlock().getType() != Material.DIRT) {
@@ -1952,9 +1940,9 @@ private void updateBlock(Block block) {
                 return;
             }
 
-            getMoneyManager().withdraw(uuid, price);
+            economy.withdrawPlayer(player, price);
             player.getInventory().addItem(item);
-            player.sendMessage(ChatColor.GREEN + "You bought " + amount + "x " + material.name() + " for " + price+" tokens.");
+            player.sendMessage(ChatColor.GREEN + "You bought " + amount + "x " + material.name() + " for $" + price+".");
         }
 
         else if (mode.equals("SELL")) {
@@ -1965,8 +1953,8 @@ private void updateBlock(Block block) {
             double multiplier = sellBoostManager.getMultiplier(player.getUniqueId());
             double price2 = price * multiplier;
             removeItems(player.getInventory(), material, amount);
-            getMoneyManager().deposit(uuid, price2);
-            player.sendMessage(ChatColor.GREEN + "You sold " + amount + "x " + material.name() + " for " + price2+" tokens.");
+            economy.depositPlayer(player, price2);
+            player.sendMessage(ChatColor.GREEN + "You sold " + amount + "x " + material.name() + " for $" + price2+".");
         }
     }
     public void removeItems(Inventory inv, Material material, int amount) {

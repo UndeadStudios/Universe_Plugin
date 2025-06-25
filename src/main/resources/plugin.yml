@@ -1,5 +1,6 @@
 name: universe
-version: ${project.version}
+version: 1.5
+author: DragonSmith
 main: com.dragonsmith.universe.Universe
 api-version: '1.21'  # Confirm the correct API version for your server
 
@@ -11,8 +12,8 @@ commands:
     description: Shows your balances.
     usage: /balance
   convert:
-    description: Convert money to tokens or tokens to money
-    usage: /convert <toTokens|toMoney> <amount>
+    description: Convert money to tokens
+    usage: /convert <amount>
     permission: universe.convert
   createisland:
     description: Creates a new island at a random location for the player.
